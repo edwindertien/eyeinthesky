@@ -44,10 +44,12 @@ void setPhase(TestPhase p) {
 // ── Arduino setup ─────────────────────────────────────────────────────────────
 void setup() {
     Serial.begin(115200);
+    while(!Serial){};
     delay(500);
     Serial.println("\n\n=== EyeWatcher Stage 1 — Servo Test ===");
 
     // ── Init I2C + M5 8Servo unit ────────────────────────────────────────────
+    Wire.begin(I2C_SDA, I2C_SCL, I2C_FREQ);
     if (!servoBoard.begin()) {
         Serial.println("[FATAL] M5Servo8 not found — check wiring and I2C address");
         // Don't halt — allow USB serial inspection. Blink user LED as error signal.

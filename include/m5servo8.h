@@ -1,102 +1,135 @@
 #pragma once
+// =============================================================================
+//  M5Servo8.h  —  Driver for M5Stack Unit 8Servos (STM32F030, 8x PWM)
+//  I2C address: 0x25
+//
+//  Register map (from official M5_UNIT_8SERVO source):
+//    0x00 + ch     pin mode (0=digital_in, 1=digital_out, 2=adc, 3=servo, 4=rgb, 5=pwm)
+//    0x10 + ch     digital output
+//    0x20 + ch     digital input
+//    0x30 + ch     analog input 8-bit
+//    0x40 + ch*2   analog input 12-bit (LE)
+//    0x50 + ch     servo angle 0-180 degrees
+//    0x60 + ch*2   servo pulse width µs, LITTLE-endian [7:0] then [15:8]
+//    0x70 + ch*3   RGB LED 24-bit
+//    0x90 + ch     PWM 8-bit
+//    0xA0          servo current (float, 4 bytes)
+//    0xFE          firmware version
+//    0xFF          I2C address
+//
+//  CRITICAL: pins default to DIGITAL_INPUT_MODE (0x00) on power-up.
+//  setAllPinMode(SERVO_CTL_MODE) must be called before any PWM output appears.
+// =============================================================================
+
 #include <Arduino.h>
 #include <Wire.h>
 #include "config.h"
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  m5servo8.h — thin I2C driver for the M5Stack 8Servo Unit (STM32F030F4)
-//
-//  Protocol summary (I2C addr 0x25):
-//    Write angle:       reg = M5S8_REG_ANGLE_BASE + channel (0–7)
-//                       data = angle byte (0–180)
-//
-//    Write pulse width: reg = M5S8_REG_PW_BASE + channel*2
-//                       data = two bytes, little-endian (µs, 500–2500)
-//
-//    Motor power:       reg = M5S8_REG_MOTOR_POWER, data = 0x01 (on) / 0x00 (off)
-//
-//    Read current:      reg = M5S8_REG_CURRENT_L (two bytes, little-endian, mA)
-//
-//  Both angle-mode and pulse-width-mode work — we expose both.
-//  Angle mode is convenient; PW mode is more precise for tuning end-stops.
-// ═══════════════════════════════════════════════════════════════════════════
+typedef enum {
+    DIGITAL_INPUT_MODE  = 0,
+    DIGITAL_OUTPUT_MODE = 1,
+    ADC_INPUT_MODE      = 2,
+    SERVO_CTL_MODE      = 3,
+    RGB_LED_MODE        = 4,
+    PWM_MODE            = 5
+} servo8_io_mode_t;
 
 class M5Servo8 {
 public:
-    // ── Initialise I2C and verify the unit is present ────────────────────────
-    // Returns true on success.
-    bool begin(uint8_t sda = I2C_SDA, uint8_t scl = I2C_SCL,
-               uint32_t freq = I2C_FREQ) {
-        Wire.begin(sda, scl, freq);
-        // Probe the device
-        Wire.beginTransmission(M5SERVO8_ADDR);
-        uint8_t err = Wire.endTransmission();
-        if (err != 0) {
-            Serial.printf("[M5Servo8] Device not found at 0x%02X (err %d)\n",
-                          M5SERVO8_ADDR, err);
+    static constexpr uint8_t DEFAULT_ADDR = 0x25;
+    static constexpr uint8_t NUM_CH       = 8;
+
+    explicit M5Servo8(uint8_t addr = DEFAULT_ADDR, TwoWire* wire = &Wire)
+        : _addr(addr), _wire(wire) {}
+
+    bool begin() {
+        // Caller must have called Wire.begin() already
+        delay(10);
+        _wire->beginTransmission(_addr);
+        if (_wire->endTransmission() != 0) {
+            Serial.printf("[M5Servo8] Not found at 0x%02X\n", _addr);
             return false;
         }
-        Serial.printf("[M5Servo8] Found at 0x%02X\n", M5SERVO8_ADDR);
+        Serial.printf("[M5Servo8] Found at 0x%02X, FW v%d\n",
+                      _addr, getFirmwareVersion());
+
+        // CRITICAL: set all channels to servo mode before writing any angles
+        setAllPinMode(SERVO_CTL_MODE);
         return true;
     }
 
-    // ── Servo power rail (MOS switch) ────────────────────────────────────────
-    // Call powerOn() before any servo movement.
-    // powerOff() releases all servos (no hold torque) — useful for sleep state.
-    void powerOn()  { _writeReg(M5S8_REG_MOTOR_POWER, 0x01); _powered = true;  }
-    void powerOff() { _writeReg(M5S8_REG_MOTOR_POWER, 0x00); _powered = false; }
-    bool isPowered() const { return _powered; }
-
-    // ── Set servo angle (0–180 degrees) ─────────────────────────────────────
-    // channel: 0–7 (matching SERVO_CH_* constants in config.h)
-    void setAngle(uint8_t channel, uint8_t angle) {
-        if (channel > 7) return;
-        angle = constrain(angle, 0, 180);
-        _writeReg(M5S8_REG_ANGLE_BASE + channel, angle);
+    // Set all 8 pins to the same mode
+    bool setAllPinMode(servo8_io_mode_t mode) {
+        uint8_t data[8];
+        memset(data, (uint8_t)mode, 8);
+        return _writeBytes(0x00, data, 8);
     }
 
-    // ── Set servo pulse width in microseconds (500–2500µs) ───────────────────
-    // More precise than angle mode; use for calibrating end-stops.
-    void setPulseWidth(uint8_t channel, uint16_t us) {
-        if (channel > 7) return;
-        us = constrain(us, 500, 2500);
-        uint8_t reg = M5S8_REG_PW_BASE + channel * 2;
-        Wire.beginTransmission(M5SERVO8_ADDR);
-        Wire.write(reg);
-        Wire.write(us & 0xFF);          // low byte
-        Wire.write((us >> 8) & 0xFF);   // high byte
-        Wire.endTransmission();
+    bool setOnePinMode(uint8_t ch, servo8_io_mode_t mode) {
+        if (ch >= NUM_CH) return false;
+        uint8_t data = (uint8_t)mode;
+        return _writeBytes(0x00 + ch, &data, 1);
     }
 
-    // ── Read total servo rail current (milliamps) ─────────────────────────────
-    // Useful for detecting stall / overload in the web dashboard
+    // Set servo angle 0–180 degrees
+    bool setServoAngle(uint8_t ch, uint8_t angle) {
+        if (ch >= NUM_CH) return false;
+        if (angle > 180) angle = 180;
+        return _writeBytes(0x50 + ch, &angle, 1);
+    }
+
+    void setAllAngles(uint8_t angle) {
+        for (uint8_t ch = 0; ch < NUM_CH; ch++) setServoAngle(ch, angle);
+    }
+
+    // Set servo pulse width in microseconds (500–2500 µs), little-endian
+    bool setServoPulse(uint8_t ch, uint16_t pulse) {
+        if (ch >= NUM_CH) return false;
+        uint8_t data[2] = { (uint8_t)(pulse & 0xFF),
+                            (uint8_t)((pulse >> 8) & 0xFF) };
+        return _writeBytes(0x60 + ch * 2, data, 2);
+    }
+
+    // Read total servo rail current in milliamps
+    // Register 0xA0 returns a float (4 bytes) in amps
     uint16_t readCurrentMA() {
-        Wire.beginTransmission(M5SERVO8_ADDR);
-        Wire.write(M5S8_REG_CURRENT_L);
-        Wire.endTransmission(false);    // repeated start
-        Wire.requestFrom((uint8_t)M5SERVO8_ADDR, (uint8_t)2);
-        if (Wire.available() < 2) return 0;
-        uint16_t lo = Wire.read();
-        uint16_t hi = Wire.read();
-        return (hi << 8) | lo;
+        uint8_t buf[4] = {0};
+        if (!_readBytes(0xA0, buf, 4)) return 0;
+        float amps;
+        memcpy(&amps, buf, 4);
+        return (uint16_t)(amps * 1000.0f);
     }
 
-    // ── Enable/disable individual servo channels ──────────────────────────────
-    // bitmask: bit 0 = ch1, bit 7 = ch8. 0xFF = all enabled (default after powerOn)
-    void setChannelEnable(uint8_t bitmask) {
-        _writeReg(M5S8_REG_SERVO_ENABLE, bitmask);
+    uint8_t getFirmwareVersion() {
+        uint8_t v = 0;
+        _readBytes(0xFE, &v, 1);
+        return v;
+    }
+
+    bool isConnected() {
+        _wire->beginTransmission(_addr);
+        return _wire->endTransmission() == 0;
     }
 
 private:
-    bool _powered = false;
+    uint8_t  _addr;
+    TwoWire* _wire;
 
-    void _writeReg(uint8_t reg, uint8_t value) {
-        Wire.beginTransmission(M5SERVO8_ADDR);
-        Wire.write(reg);
-        Wire.write(value);
-        Wire.endTransmission();
+    bool _writeBytes(uint8_t reg, uint8_t* buf, uint8_t len) {
+        _wire->beginTransmission(_addr);
+        _wire->write(reg);
+        for (uint8_t i = 0; i < len; i++) _wire->write(buf[i]);
+        return _wire->endTransmission() == 0;
+    }
+
+    bool _readBytes(uint8_t reg, uint8_t* buf, uint8_t len) {
+        _wire->beginTransmission(_addr);
+        _wire->write(reg);
+        _wire->endTransmission(false);
+        if (_wire->requestFrom(_addr, len) != len) return false;
+        for (uint8_t i = 0; i < len; i++) buf[i] = _wire->read();
+        return true;
     }
 };
 
-// Singleton — included by servo_eye.cpp, declared extern elsewhere as needed
 extern M5Servo8 servoBoard;

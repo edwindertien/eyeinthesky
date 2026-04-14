@@ -47,16 +47,16 @@
 // Constrain to safe range — prevents grinding on hard stops.
 // Tune these to match your actual eye mechanism geometry.
 #define PAN_CENTER          90
-#define PAN_MIN             50
+#define PAN_MIN             70
 #define PAN_MAX             130
 
 #define TILT_CENTER         85
-#define TILT_MIN            65
+#define TILT_MIN            70
 #define TILT_MAX            105
 
 // Eyelid angles — adjust to suit your 3D-printed mechanism
 // "Open" and "closed" may need swapping depending on linkage direction
-#define LID_TOP_OPEN        60        // Upper lid fully raised
+#define LID_TOP_OPEN        70        // Upper lid fully raised
 #define LID_TOP_CLOSED      100       // Upper lid fully lowered
 #define LID_TOP_HALF        80        // Drowsy / dozing position
 
