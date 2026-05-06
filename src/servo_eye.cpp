@@ -4,29 +4,28 @@ ServoEye eye;
 
 // ── begin ─────────────────────────────────────────────────────────────────────
 bool ServoEye::begin() {
-    // Wire.begin() must be called before this
     if (!servoBoard.begin()) return false;
 
-    // Home all axes to safe starting positions before motion begins
-    servoBoard.setServoAngle(SERVO_CH_PAN,     PAN_CENTER);
-    servoBoard.setServoAngle(SERVO_CH_TILT,    TILT_CENTER);
-
-    uint8_t topClosed, botClosed;
-    _lidToDeg(0.0f, topClosed, botClosed);
-    servoBoard.setServoAngle(SERVO_CH_LID_TOP, topClosed);
-    servoBoard.setServoAngle(SERVO_CH_LID_BOT, botClosed);
-
-    _curPan  = _tgtPan  = PAN_CENTER;
+    _curPan = _tgtPan = PAN_CENTER;
     _curTilt = _tgtTilt = TILT_CENTER;
-    _curLid  = _tgtLid  = 0.0f;
-    _lastPan = _lastTilt = _lastLid = -999.f;
+    _curArousal = _tgtArousal = 1.0f;   // start fully open
+    _lastPan = _lastTilt = _lastTop = _lastBot = -999.f;
 
-    Serial.println("[ServoEye] Homed to neutral/closed");
+    // Write home position immediately
+    servoBoard.setServoAngle(SERVO_CH_PAN,  PAN_CENTER);
+    servoBoard.setServoAngle(SERVO_CH_TILT, TILT_CENTER);
+    uint8_t topDeg, botDeg;
+    _computeLidAngles(TILT_CENTER, PAN_CENTER,
+                      _arousalToGap(1.0f), topDeg, botDeg);
+    servoBoard.setServoAngle(SERVO_CH_LID_TOP, topDeg);
+    servoBoard.setServoAngle(SERVO_CH_LID_BOT, botDeg);
+
+    Serial.println("[ServoEye] Ready — lids open, gaze neutral");
     return true;
 }
 
-// ── setGazeTarget ─────────────────────────────────────────────────────────────
-void ServoEye::setGazeTarget(float normX, float normY, float alpha) {
+// ── setGazeNorm ───────────────────────────────────────────────────────────────
+void ServoEye::setGazeNorm(float normX, float normY, float alpha) {
     _tgtPan    = _normToPan(normX);
     _tgtTilt   = _normToTilt(normY);
     _alphaGaze = constrain(alpha, 0.001f, 1.0f);
@@ -39,75 +38,78 @@ void ServoEye::setGazeDeg(float panDeg, float tiltDeg, float alpha) {
     _alphaGaze = constrain(alpha, 0.001f, 1.0f);
 }
 
-// ── setLids ───────────────────────────────────────────────────────────────────
-void ServoEye::setLids(float fraction, float alpha) {
-    _tgtLid   = constrain(fraction, 0.0f, 1.0f);
-    _alphaLid = constrain(alpha, 0.001f, 1.0f);
+// ── setArousal ────────────────────────────────────────────────────────────────
+void ServoEye::setArousal(float level, float alpha) {
+    _tgtArousal = constrain(level, 0.0f, 1.0f);
+    _alphaLid   = constrain(alpha, 0.001f, 1.0f);
 }
 
 // ── blink ─────────────────────────────────────────────────────────────────────
 void ServoEye::blink() {
     if (_blinking) return;
-    _blinking       = true;
-    _blinkStart     = millis();
-    _lidBeforeBlink = _tgtLid;
+    _blinking            = true;
+    _blinkStart          = millis();
+    _arousalBeforeBlink  = _tgtArousal;
 }
 
-// ── setSleeping / setDozing / setAwake ────────────────────────────────────────
+// ── Convenience presets ───────────────────────────────────────────────────────
 void ServoEye::setSleeping() {
-    setLids(0.0f, 0.05f);
+    setArousal(0.0f, 0.03f);
     setGazeDeg(PAN_CENTER, TILT_CENTER, 0.02f);
 }
 
 void ServoEye::setDozing() {
-    setLids(0.35f, 0.04f);
+    setArousal(0.3f, 0.03f);
 }
 
 void ServoEye::setAwake() {
-    setLids(1.0f, 0.06f);
+    setArousal(1.0f, 0.06f);
 }
 
 // ── update ────────────────────────────────────────────────────────────────────
 bool ServoEye::update() {
-    // ── Blink state machine ──────────────────────────────────────────────────
-    if (_blinking) {
-        uint32_t elapsed = millis() - _blinkStart;
-        uint32_t half    = behaviour.blinkDurationMs / 2;
-        float blinkLid;
-        if (elapsed < half) {
-            blinkLid = _lidBeforeBlink * (1.0f - (float)elapsed / half);
-        } else if (elapsed < behaviour.blinkDurationMs) {
-            blinkLid = _lidBeforeBlink * ((float)(elapsed - half) / half);
-        } else {
-            blinkLid  = _lidBeforeBlink;
-            _blinking = false;
-        }
-        _curLid = blinkLid;
-    } else {
-        _curLid += _alphaLid * (_tgtLid - _curLid);
-    }
-
-    // ── Gaze EMA ────────────────────────────────────────────────────────────
+    // ── Gaze EMA ─────────────────────────────────────────────────────────────
     _curPan  += _alphaGaze * (_tgtPan  - _curPan);
     _curTilt += _alphaGaze * (_tgtTilt - _curTilt);
 
-    // ── Write to hardware only when value has moved enough ───────────────────
+    // ── Arousal / blink ───────────────────────────────────────────────────────
+    if (_blinking) {
+        uint32_t elapsed = millis() - _blinkStart;
+        uint32_t half    = behaviour.blinkDurationMs / 2;
+        if (elapsed < half) {
+            // closing: arousal drops to 0
+            _curArousal = _arousalBeforeBlink
+                        * (1.0f - (float)elapsed / half);
+        } else if (elapsed < behaviour.blinkDurationMs) {
+            // opening: arousal returns to pre-blink level
+            _curArousal = _arousalBeforeBlink
+                        * ((float)(elapsed - half) / half);
+        } else {
+            _curArousal = _arousalBeforeBlink;
+            _blinking   = false;
+        }
+    } else {
+        _curArousal += _alphaLid * (_tgtArousal - _curArousal);
+    }
+
+    // ── Pan widening: lids open slightly more when looking sideways ───────────
+    float panNorm  = fabsf(_curPan - PAN_CENTER) / (float)(PAN_MAX - PAN_CENTER);
+    float widenGap = panNorm * (float)(PAN_MAX - PAN_CENTER) * LID_PAN_WIDEN * 0.1f;
+    float gap      = _arousalToGap(_curArousal) + widenGap;
+
+    // ── Compute and write lid angles ──────────────────────────────────────────
+    uint8_t topDeg, botDeg;
+    _computeLidAngles(_curTilt, _curPan, gap, topDeg, botDeg);
+    _writeIfChanged(SERVO_CH_LID_TOP, (float)topDeg, _lastTop);
+    _writeIfChanged(SERVO_CH_LID_BOT, (float)botDeg, _lastBot);
     _writeIfChanged(SERVO_CH_PAN,  _curPan,  _lastPan);
     _writeIfChanged(SERVO_CH_TILT, _curTilt, _lastTilt);
-
-    uint8_t topDeg, botDeg;
-    _lidToDeg(_curLid, topDeg, botDeg);
-    float topF = (float)topDeg;
-    if (fabsf(topF - _lastLid) >= 0.6f) {
-        servoBoard.setServoAngle(SERVO_CH_LID_TOP, topDeg);
-        servoBoard.setServoAngle(SERVO_CH_LID_BOT, botDeg);
-        _lastLid = topF;
-    }
 
     return true;
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
+
 float ServoEye::_normToPan(float n) const {
     n = constrain(n, 0.0f, 1.0f);
     return PAN_MAX - n * (PAN_MAX - PAN_MIN);
@@ -115,19 +117,33 @@ float ServoEye::_normToPan(float n) const {
 
 float ServoEye::_normToTilt(float n) const {
     n = constrain(n, 0.0f, 1.0f);
-    return TILT_MIN + n * (TILT_MAX - TILT_MIN);
+    return TILT_MAX - n * (TILT_MAX - TILT_MIN);
 }
 
-void ServoEye::_lidToDeg(float frac, uint8_t& topDeg, uint8_t& botDeg) const {
-    frac = constrain(frac, 0.0f, 1.0f);
-    topDeg = (uint8_t)(LID_TOP_CLOSED + frac * (LID_TOP_OPEN - LID_TOP_CLOSED));
-    botDeg = (uint8_t)(LID_BOT_CLOSED + frac * (LID_BOT_OPEN - LID_BOT_CLOSED));
+// Map arousal 0–1 to lid gap in degrees
+float ServoEye::_arousalToGap(float arousal) const {
+    arousal = constrain(arousal, 0.0f, 1.0f);
+    return LID_HALF_GAP_CLOSED
+         + arousal * (LID_HALF_GAP_OPEN - LID_HALF_GAP_CLOSED);
+}
+
+void ServoEye::_computeLidAngles(float tiltDeg, float panDeg, float gap,
+                                  uint8_t& topDeg, uint8_t& botDeg) const {
+    // Center tracks tilt — eye looking up shifts both lids up
+    float tiltOffset = (tiltDeg - TILT_CENTER) * LID_TILT_FOLLOW;
+    float center     = LID_CENTER_DEG - tiltOffset;
+
+    float topF = center + LID_TOP_DIR * gap;
+    float botF = center + LID_BOT_DIR * gap;
+
+    topDeg = (uint8_t)constrain(topF, 0.0f, 180.0f);
+    botDeg = (uint8_t)constrain(botF, 0.0f, 180.0f);
 }
 
 void ServoEye::_writeIfChanged(uint8_t ch, float deg,
-                                float& lastWritten, float threshold) {
-    if (fabsf(deg - lastWritten) >= threshold) {
+                                float& last, float threshold) {
+    if (fabsf(deg - last) >= threshold) {
         servoBoard.setServoAngle(ch, (uint8_t)constrain(deg, 0.0f, 180.0f));
-        lastWritten = deg;
+        last = deg;
     }
 }
