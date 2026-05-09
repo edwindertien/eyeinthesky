@@ -1,230 +1,264 @@
 #include "behaviour.h"
-#include "saliency.h"
 #include "vision.h"
 #include "config.h"
+#include "calibration.h"
+#include <cmath>
 
 Behaviour behaviour_sm;
 
+// Dwell times: how long to look at each blob before shifting
+static const uint32_t DWELL_MIN_MS   = 800;   // minimum dwell (small movement)
+static const uint32_t DWELL_MAX_MS   = 2000;  // maximum dwell (large movement)
+static const uint32_t STARTLE_MS     = 500;   // startle duration
+static const uint32_t SCAN_TO_DOZE   = 10000; // scanning → dozing if no blobs
+static const uint32_t DOZE_TO_SLEEP  = 20000; // dozing → sleeping
+
 // ── begin ─────────────────────────────────────────────────────────────────────
 void Behaviour::begin() {
-    // Safety check — if BehaviourConfig is zero-initialised, set safe defaults
-    if (behaviour.blinkDurationMs == 0) behaviour.blinkDurationMs = 110;
-    if (behaviour.blinkIntervalMs == 0) behaviour.blinkIntervalMs = 3500;
-    if (behaviour.blinkJitterMs   == 0) behaviour.blinkJitterMs   = 1500;
-    if (behaviour.idleToDozeMs    == 0) behaviour.idleToDozeMs    = 12000;
-    if (behaviour.dozeToSleepMs   == 0) behaviour.dozeToSleepMs   = 40000;
-    if (behaviour.wakeDelayMs     == 0) behaviour.wakeDelayMs     = 300;
-    if (behaviour.scanPanAmp      == 0) behaviour.scanPanAmp      = 18.0f;
-    if (behaviour.scanTiltAmp     == 0) behaviour.scanTiltAmp     = 6.0f;
-    if (behaviour.scanPeriodMs    == 0) behaviour.scanPeriodMs    = 9000.0f;
-    if (behaviour.gazeAlphaIdle   == 0) behaviour.gazeAlphaIdle   = 0.04f;
-    if (behaviour.gazeAlphaTrack  == 0) behaviour.gazeAlphaTrack  = 0.14f;
-    if (behaviour.gazeAlphaFocus  == 0) behaviour.gazeAlphaFocus  = 0.06f;
-
-    _scanT     = 0.0f;
-    _lastBlink = millis();
+    _scanT       = 0.0f;
+    _lastBlinkMs = millis();
+    _startleMs   = 0;
+    _targetBlobId = 0;
+    _dwellStartMs = millis();
+    _lastMotionMs = 0;
     _setState(EyeState::WAKING);
-    Serial.printf("[Behaviour] Started — idleToDoze=%lums dozeToSleep=%lums\n",
-                  behaviour.idleToDozeMs, behaviour.dozeToSleepMs);
+    Serial.println("[Behaviour] Started");
 }
 
-// ── _setState ────────────────────────────────────────────────────────────────
 void Behaviour::_setState(EyeState s) {
-    if (s != _state) {
+    if (s != _state)
         Serial.printf("[State] %s → %s\n", stateName(_state), stateName(s));
-    }
     _state   = s;
     _stateMs = millis();
 }
 
-// ── _arousalForState ─────────────────────────────────────────────────────────
+// ── Arousal targets ───────────────────────────────────────────────────────────
 float Behaviour::_arousalForState(EyeState s) const {
     switch (s) {
         case EyeState::SLEEPING:  return 0.0f;
-        case EyeState::DOZING:    return 0.25f;
-        case EyeState::WAKING:    return 0.6f;
-        case EyeState::SCANNING:  return 0.75f;
-        case EyeState::IDLE:      return 0.85f;
-        case EyeState::TRACKING:  return 1.0f;
-        case EyeState::FOCUS:     return 0.9f;  // intense but not wide-eyed
-        default:                   return 0.75f;
+        case EyeState::DOZING:    return 0.2f;
+        case EyeState::WAKING:    return 0.4f;
+        case EyeState::SCANNING:  return 0.5f;
+        case EyeState::TRACKING:  return 0.55f;
+        case EyeState::FOCUS:     return 0.5f;
+        default:                   return 0.5f;
     }
 }
 
-// ── _handleBlink ─────────────────────────────────────────────────────────────
+// ── Blink ─────────────────────────────────────────────────────────────────────
 void Behaviour::_handleBlink(uint32_t now) {
-    // Blink rate increases when idle/scanning, slows during focus
-    uint32_t interval = behaviour.blinkIntervalMs;
-    if (_state == EyeState::FOCUS)    interval *= 2;   // focused = less blinking
-    if (_state == EyeState::SCANNING) interval = (uint32_t)(interval * 0.8f);
+    if (_state == EyeState::SLEEPING) return;
 
-    // Use signed arithmetic to avoid uint32_t underflow on subtraction
+    // Blink interval scales inversely with arousal:
+    //   arousal 1.0 (alert)  -> blinkIntervalMs base          (~5s)
+    //   arousal 0.5 (normal) -> blinkIntervalMs * 1.5         (~7.5s)
+    //   arousal 0.2 (dozing) -> blinkIntervalMs * 4           (~20s)
+    //   arousal 0.0 (asleep) -> would be infinite, but we return above
+    // Also: blink duration slows when drowsy (lazy, heavy blink)
+    float arousal = eye.getArousal();
+    float scale   = 1.0f + (1.0f - arousal) * 3.0f;  // 1x at full, 4x at zero
+    uint32_t interval = (uint32_t)(behaviour.blinkIntervalMs * scale);
+
     int32_t jitter = (int32_t)random(-(int32_t)behaviour.blinkJitterMs,
                                       (int32_t)behaviour.blinkJitterMs);
-    uint32_t blinkInterval = (uint32_t)max(500L, (long)interval + jitter);
-    if (now - _lastBlink > blinkInterval) {
+    if (now - _lastBlinkMs > (uint32_t)max(500L, (long)interval + jitter)) {
+        // Drowsy blink is slower — arousal 1.0 = normal speed, 0.2 = 3x slower
+        // We temporarily override blinkDurationMs, then restore it
+        uint32_t savedDur = behaviour.blinkDurationMs;
+        behaviour.blinkDurationMs = (uint32_t)(savedDur * (1.0f + (1.0f - arousal) * 2.0f));
         eye.blink();
-        _lastBlink = now;
+        behaviour.blinkDurationMs = savedDur;  // restore immediately after trigger
+        _lastBlinkMs = now;
     }
+}
+
+// ── _dwellExpired ─────────────────────────────────────────────────────────────
+bool Behaviour::_dwellExpired(uint32_t now) const {
+    // Dwell scales with travel distance — far jumps linger longer
+    float dx   = _gazeX - 0.5f;  // rough travel from center
+    float dy   = _gazeY - 0.5f;
+    float dist = sqrtf(dx*dx + dy*dy) * 1.41f;  // 0=center, 1=corner
+    uint32_t dwell = (uint32_t)(DWELL_MIN_MS + dist * (DWELL_MAX_MS - DWELL_MIN_MS));
+    return (now - _dwellStartMs) > dwell;
+}
+
+// ── _pickNextBlob ─────────────────────────────────────────────────────────────
+// Round-robin with preference for large travel distance
+int Behaviour::_pickNextBlob(const BlobResult& blobs) const {
+    if (blobs.count == 0) return -1;
+    if (blobs.count == 1) return 0;
+
+    // Find blob currently being tracked
+    int currentIdx = -1;
+    for (int i = 0; i < blobs.count; i++)
+        if (blobs.blobs[i].id == _targetBlobId) { currentIdx = i; break; }
+
+    // Try next blob in round-robin
+    int nextIdx = (currentIdx + 1) % blobs.count;
+
+    // If next blob is very close to current gaze, try the one after
+    // (prefer large travel for artistically interesting gaze shifts)
+    float dx = blobs.blobs[nextIdx].normX - _gazeX;
+    float dy = blobs.blobs[nextIdx].normY - _gazeY;
+    if (sqrtf(dx*dx + dy*dy) < 0.12f && blobs.count > 2) {
+        nextIdx = (nextIdx + 1) % blobs.count;
+    }
+    return nextIdx;
 }
 
 // ── State handlers ────────────────────────────────────────────────────────────
 
-void Behaviour::_doSleeping(uint32_t now) {
+void Behaviour::_doSleeping(uint32_t now, const BlobResult& blobs) {
     eye.setSleeping();
-    // Wake on any detection arriving
-    DetectionResult det;
-    if (xQueuePeek(detectionQueue, &det, 0) == pdTRUE && det.valid) {
+    if (blobs.anyMotion) {
+        // Reset background so wake starts with clean slate.
+        // _doWaking will wait for background to re-stabilise before tracking.
+        blobTracker.resetBackground();
+        _startleMs     = now;
+        _wakeResetMs   = now;
+        _wakeResetDone = false;  // will do a second reset once lids open
         _setState(EyeState::WAKING);
     }
 }
 
 void Behaviour::_doWaking(uint32_t now) {
-    eye.setGazeDeg(PAN_CENTER, TILT_CENTER, 0.03f);
-    eye.setArousal(_arousalForState(EyeState::WAKING), 0.02f);
+    eye.setGazeDeg(calibration.data.panCenter, calibration.data.tiltCenter, 0.03f);
+    eye.setArousal(_arousalForState(EyeState::WAKING), 0.025f);
+
     uint32_t elapsed = now - _stateMs;
-    if (elapsed > behaviour.wakeDelayMs + 800) {
+
+    // At 1.5s into waking, lids are mostly open — issue a fresh bgreset
+    // so the background is learned from the real current scene, not the
+    // half-initialised state from the sleep→wake transition.
+    if (elapsed > 1500 && !_wakeResetDone) {
+        blobTracker.resetBackground();
+        _wakeResetMs   = now;
+        _wakeResetDone = true;
+        Serial.println("[Wake] Background reset — lids open, learning scene");
+    }
+
+    // Wait 2s after the fresh reset before allowing tracking
+    bool bgSettled = _wakeResetDone && (now - _wakeResetMs) > 2000;
+    if (bgSettled) {
         _setState(EyeState::SCANNING);
     }
 }
 
-void Behaviour::_doScanning(uint32_t now) {
-    // Two-frequency sinusoidal scan — feels organic, not mechanical
-    float dt = 0.020f;  // 50Hz tick
-    _scanT += dt;
-    float pan  = PAN_CENTER
+void Behaviour::_doScanning(uint32_t now, const BlobResult& blobs) {
+    // Lazy sinusoidal scan
+    _scanT += 0.020f;
+    float pan  = calibration.data.panCenter
                + sinf(_scanT * 0.28f) * behaviour.scanPanAmp
-               + sinf(_scanT * 0.61f) * (behaviour.scanPanAmp * 0.25f);
-    float tilt = TILT_CENTER
+               + sinf(_scanT * 0.61f) * behaviour.scanPanAmp * 0.25f;
+    float tilt = calibration.data.tiltCenter
                + sinf(_scanT * 0.19f) * behaviour.scanTiltAmp;
     eye.setGazeDeg(pan, tilt, behaviour.gazeAlphaIdle);
     eye.setArousal(_arousalForState(EyeState::SCANNING), 0.04f);
 
-    // Drift toward dozing if nothing detected for a long time
-    uint32_t elapsed = now - _stateMs;
-    if (elapsed > behaviour.idleToDozeMs) {
+    if (blobs.anyMotion) {
+        _startleMs = now;
+        _targetBlobId = 0;  // force fresh selection
+        _setState(EyeState::TRACKING);
+    } else if (now - _stateMs > SCAN_TO_DOZE) {
         _setState(EyeState::DOZING);
     }
 }
 
-void Behaviour::_doIdle(uint32_t now) {
-    // Subtle drift near last known position
-    float pan  = PAN_CENTER + (_lastNormX - 0.5f) * (PAN_MAX - PAN_MIN) * 0.3f;
-    float tilt = TILT_CENTER + (_lastNormY - 0.5f) * (TILT_MAX - TILT_MIN) * 0.3f;
-    eye.setGazeDeg(pan, tilt, 0.02f);
-    eye.setArousal(_arousalForState(EyeState::IDLE), 0.04f);
-
-    uint32_t elapsed = now - _stateMs;
-    if (elapsed > 5000) _setState(EyeState::SCANNING);
-}
-
-void Behaviour::_doDozing(uint32_t now) {
-    eye.setDozing();
-    float dt = 0.020f;
-    _scanT += dt * 0.3f;  // very slow scan
-    float pan = PAN_CENTER + sinf(_scanT * 0.1f) * behaviour.scanPanAmp * 0.4f;
-    eye.setGazeDeg(pan, TILT_CENTER, 0.02f);
-
-    uint32_t elapsed = now - _stateMs;
-    if (elapsed > behaviour.dozeToSleepMs) _setState(EyeState::SLEEPING);
-}
-
-void Behaviour::_doTracking(uint32_t now, const DetectionResult& det) {
-    // Map camera normalised coords → servo degrees
-    eye.setGazeNorm(det.normX, det.normY, behaviour.gazeAlphaTrack);
-    eye.setArousal(_arousalForState(EyeState::TRACKING), 0.08f);
-
-    // Stamp habituation so we get bored of this location
-    saliency.habituate(det.normX, det.normY);
-
-    // Sustained detection → FOCUS
-    uint32_t elapsed = now - _stateMs;
-    if (elapsed > 3000 && det.confidence > 0.5f) {
-        _setState(EyeState::FOCUS);
+void Behaviour::_doTracking(uint32_t now, const BlobResult& blobs) {
+    // ── Startle: brief wide-eye on first detection ────────────────────────────
+    if (_startleMs > 0 && (now - _startleMs) < STARTLE_MS) {
+        float t = 1.0f - (float)(now - _startleMs) / STARTLE_MS;
+        eye.setArousal(0.55f + t * 0.45f, 0.3f);
+    } else {
+        _startleMs = 0;
+        eye.setArousal(_arousalForState(EyeState::TRACKING), 0.04f);
     }
+
+    if (!blobs.anyMotion) {
+        _setState(EyeState::SCANNING);
+        return;
+    }
+
+    // ── Find current target blob in result ────────────────────────────────────
+    int currentIdx = -1;
+    for (int i = 0; i < blobs.count; i++)
+        if (blobs.blobs[i].id == _targetBlobId) { currentIdx = i; break; }
+
+    // ── Shift to next blob when dwell expires ────────────────────────────────
+    bool shouldShift = _dwellExpired(now) || currentIdx < 0;
+
+    if (shouldShift) {
+        int nextIdx = _pickNextBlob(blobs);
+        if (nextIdx >= 0) {
+            const Blob& target = blobs.blobs[nextIdx];
+
+            // Only shift if travel is meaningful (>10% of frame)
+            float dx   = target.normX - _gazeX;
+            float dy   = target.normY - _gazeY;
+            float dist = sqrtf(dx*dx + dy*dy);
+
+            if (currentIdx < 0 || dist > 0.10f || _dwellExpired(now)) {
+                Serial.printf("[Gaze] Blob%d  %.2f,%.2f → %.2f,%.2f  dist=%.2f\n",
+                              target.id, _gazeX, _gazeY,
+                              target.normX, target.normY, dist);
+                _gazeX        = target.normX;
+                _gazeY        = target.normY;
+                _targetBlobId = target.id;
+                _dwellStartMs = now;
+                _lastBlobIdx  = nextIdx;
+            }
+        }
+    }
+
+    // ── Gaze at committed position ────────────────────────────────────────────
+    // Add slight predictive lead in direction of blob velocity
+    float leadX = _gazeX, leadY = _gazeY;
+    if (currentIdx >= 0) {
+        const Blob& b = blobs.blobs[currentIdx];
+        // Lead by ~0.15s of travel
+        leadX = _gazeX + b.vx * 0.15f;
+        leadY = _gazeY + b.vy * 0.15f;
+        leadX = constrain(leadX, 0.05f, 0.95f);
+        leadY = constrain(leadY, 0.05f, 0.95f);
+    }
+    eye.setGazeNorm(leadX, leadY, behaviour.gazeAlphaTrack);
+    _lastMotionMs = now;
 }
 
-void Behaviour::_doFocus(uint32_t now, const DetectionResult& det) {
-    // Locked gaze with very slow alpha — intense stillness
-    eye.setGazeNorm(det.normX, det.normY, behaviour.gazeAlphaFocus);
-    eye.setArousal(_arousalForState(EyeState::FOCUS), 0.03f);
+void Behaviour::_doDozing(uint32_t now, const BlobResult& blobs) {
+    eye.setDozing();
+    _scanT += 0.005f;
+    float pan = calibration.data.panCenter
+              + sinf(_scanT * 0.08f) * behaviour.scanPanAmp * 0.3f;
+    eye.setGazeDeg(pan, calibration.data.tiltCenter, 0.015f);
 
-    // Heavy habituation — eye will eventually tire of this target
-    saliency.habituate(det.normX, det.normY);
-    saliency.habituate(det.normX, det.normY);  // double stamp in focus
+    if (blobs.anyMotion) {
+        _startleMs = now;
+        _setState(EyeState::WAKING);
+    } else if (now - _stateMs > DOZE_TO_SLEEP) {
+        _setState(EyeState::SLEEPING);
+    }
 }
 
 // ── update ────────────────────────────────────────────────────────────────────
 void Behaviour::update() {
     uint32_t now = millis();
 
-    // ── Read latest detection (non-blocking) ──────────────────────────────────
-    DetectionResult det = {false, 0.5f, 0.5f, 0.0f, 0};
-    bool gotDet = (detectionQueue != nullptr) &&
-                  (xQueuePeek(detectionQueue, &det, 0) == pdTRUE);
+    // Read latest blob result (non-blocking)
+    BlobResult blobs = {};
+    if (blobQueue) xQueuePeek(blobQueue, &blobs, 0);
 
-    // Track last seen position and time
-    if (gotDet && det.valid) {
-        _lastNormX  = det.normX;
-        _lastNormY  = det.normY;
-        _lastConf   = det.confidence;
-        _lastDetect = now;
-    }
+    if (blobs.anyMotion) _lastMotionMs = now;
 
-    bool targetPresent = gotDet && det.valid;
-    bool targetRecent  = (now - _lastDetect) < 2000;  // linger 2s after loss
-
-    // ── State transitions ─────────────────────────────────────────────────────
     switch (_state) {
-
-        case EyeState::SLEEPING:
-            _doSleeping(now);
-            break;
-
-        case EyeState::WAKING:
-            _doWaking(now);
-            if (targetPresent) _setState(EyeState::TRACKING);
-            break;
-
-        case EyeState::SCANNING:
-            _doScanning(now);
-            if (targetPresent) _setState(EyeState::TRACKING);
-            break;
-
-        case EyeState::IDLE:
-            _doIdle(now);
-            if (targetPresent) _setState(EyeState::TRACKING);
-            break;
-
-        case EyeState::TRACKING:
-            if (targetPresent) {
-                _doTracking(now, det);
-            } else if (targetRecent) {
-                // Linger briefly at last position
-                DetectionResult linger = {true, _lastNormX, _lastNormY,
-                                          _lastConf * 0.5f, _lastDetect};
-                _doTracking(now, linger);
-            } else {
-                _setState(EyeState::IDLE);
-            }
-            break;
-
-        case EyeState::FOCUS:
-            if (targetPresent) {
-                _doFocus(now, det);
-            } else if (targetRecent) {
-                _setState(EyeState::TRACKING);
-            } else {
-                _setState(EyeState::IDLE);
-            }
-            break;
-
-        case EyeState::DOZING:
-            _doDozing(now);
-            if (targetPresent) _setState(EyeState::WAKING);
-            break;
+        case EyeState::SLEEPING: _doSleeping(now, blobs);      break;
+        case EyeState::WAKING:   _doWaking(now);               break;
+        case EyeState::SCANNING: _doScanning(now, blobs);      break;
+        case EyeState::TRACKING: _doTracking(now, blobs);      break;
+        case EyeState::DOZING:   _doDozing(now, blobs);        break;
+        case EyeState::IDLE:     _setState(EyeState::SCANNING); break;
+        case EyeState::FOCUS:    _setState(EyeState::TRACKING); break;
     }
 
-    // ── Blink (all states except sleeping) ───────────────────────────────────
     if (_state != EyeState::SLEEPING) _handleBlink(now);
 }

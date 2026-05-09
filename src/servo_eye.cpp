@@ -1,3 +1,4 @@
+#include "calibration.h"
 #include "servo_eye.h"
 
 ServoEye eye;
@@ -6,17 +7,26 @@ ServoEye eye;
 bool ServoEye::begin() {
     if (!servoBoard.begin()) return false;
 
-    _curPan = _tgtPan = PAN_CENTER;
-    _curTilt = _tgtTilt = TILT_CENTER;
+    // Safety clamp: regardless of calibration source, never write outside
+    // the absolute safe range for an SG90 (20–160°).
+    // This is the last line of defence against corrupted calibration data.
+    auto clampSafe = [](uint8_t v) -> uint8_t {
+        return (uint8_t)constrain((int)v, 20, 160);
+    };
+    uint8_t safeCenter = clampSafe(calibration.data.panCenter);
+    uint8_t safeTiltC  = clampSafe(calibration.data.tiltCenter);
+
+    _curPan = _tgtPan = safeCenter;
+    _curTilt = _tgtTilt = calibration.data.tiltCenter;
     _curArousal = _tgtArousal = 1.0f;   // start fully open
     _lastPan = _lastTilt = _lastTop = _lastBot = -999.f;
 
     // Write home position immediately
-    servoBoard.setServoAngle(SERVO_CH_PAN,  PAN_CENTER);
-    servoBoard.setServoAngle(SERVO_CH_TILT, TILT_CENTER);
+    servoBoard.setServoAngle(SERVO_CH_PAN,  safeCenter);
+    servoBoard.setServoAngle(SERVO_CH_TILT, safeTiltC);
     uint8_t topDeg, botDeg;
-    _computeLidAngles(TILT_CENTER, PAN_CENTER,
-                      _arousalToGap(1.0f), topDeg, botDeg);
+    _computeLidAngles(calibration.data.tiltCenter, calibration.data.panCenter,
+                      0.5f, topDeg, botDeg);  // 0.5 = rest position
     servoBoard.setServoAngle(SERVO_CH_LID_TOP, topDeg);
     servoBoard.setServoAngle(SERVO_CH_LID_BOT, botDeg);
 
@@ -33,8 +43,8 @@ void ServoEye::setGazeNorm(float normX, float normY, float alpha) {
 
 // ── setGazeDeg ────────────────────────────────────────────────────────────────
 void ServoEye::setGazeDeg(float panDeg, float tiltDeg, float alpha) {
-    _tgtPan    = constrain(panDeg,  (float)PAN_MIN,  (float)PAN_MAX);
-    _tgtTilt   = constrain(tiltDeg, (float)TILT_MIN, (float)TILT_MAX);
+    _tgtPan    = constrain(panDeg,  (float)calibration.data.panMin,  (float)calibration.data.panMax);
+    _tgtTilt   = constrain(tiltDeg, (float)calibration.data.tiltMin, (float)calibration.data.tiltMax);
     _alphaGaze = constrain(alpha, 0.001f, 1.0f);
 }
 
@@ -55,7 +65,7 @@ void ServoEye::blink() {
 // ── Convenience presets ───────────────────────────────────────────────────────
 void ServoEye::setSleeping() {
     setArousal(0.0f, 0.03f);
-    setGazeDeg(PAN_CENTER, TILT_CENTER, 0.02f);
+    setGazeDeg(calibration.data.panCenter, calibration.data.tiltCenter, 0.02f);
 }
 
 void ServoEye::setDozing() {
@@ -68,9 +78,23 @@ void ServoEye::setAwake() {
 
 // ── update ────────────────────────────────────────────────────────────────────
 bool ServoEye::update() {
-    // ── Gaze EMA ─────────────────────────────────────────────────────────────
-    _curPan  += _alphaGaze * (_tgtPan  - _curPan);
-    _curTilt += _alphaGaze * (_tgtTilt - _curTilt);
+    // ── Gaze — distance-weighted alpha ───────────────────────────────────────
+    // Large movements use a higher alpha (snappier), small corrections use lower.
+    // This gives decisive gaze shifts to corners while still being smooth near target.
+    float panErr  = _tgtPan  - _curPan;
+    float tiltErr = _tgtTilt - _curTilt;
+    float dist    = sqrtf(panErr*panErr + tiltErr*tiltErr);
+
+    // Scale alpha: at 30° distance use full alpha, at <2° use minimum
+    // This means: pick a corner → snap there → settle gently
+    float dynamicAlpha = _alphaGaze;
+    if (dist > 5.0f) {
+        // Boost alpha proportionally to distance, capped at 0.35
+        dynamicAlpha = fminf(0.35f, _alphaGaze + (dist / 30.0f) * 0.25f);
+    }
+
+    _curPan  += dynamicAlpha * panErr;
+    _curTilt += dynamicAlpha * tiltErr;
 
     // ── Arousal / blink ───────────────────────────────────────────────────────
     if (_blinking) {
@@ -93,9 +117,11 @@ bool ServoEye::update() {
     }
 
     // ── Pan widening: lids open slightly more when looking sideways ───────────
-    float panNorm  = fabsf(_curPan - PAN_CENTER) / (float)(PAN_MAX - PAN_CENTER);
-    float widenGap = panNorm * (float)(PAN_MAX - PAN_CENTER) * LID_PAN_WIDEN * 0.1f;
-    float gap      = _arousalToGap(_curArousal) + widenGap;
+    float panNorm  = fabsf(_curPan - calibration.data.panCenter) / (float)(calibration.data.panMax - calibration.data.panCenter);
+    float widenGap = panNorm * (float)(calibration.data.panMax - calibration.data.panCenter) * calibration.data.lidPanWiden * 0.1f;
+    // Pass arousal directly (0=closed, 0.5=rest, 1=maxOpen)
+    // panOffset passed separately via widenGap (unused in new model)
+    float gap = _curArousal;  // repurposed as arousal in _computeLidAngles
 
     // ── Compute and write lid angles ──────────────────────────────────────────
     uint8_t topDeg, botDeg;
@@ -112,29 +138,49 @@ bool ServoEye::update() {
 
 float ServoEye::_normToPan(float n) const {
     n = constrain(n, 0.0f, 1.0f);
-    return PAN_MAX - n * (PAN_MAX - PAN_MIN);
+    return calibration.data.panMax - n * (calibration.data.panMax - calibration.data.panMin);
 }
 
 float ServoEye::_normToTilt(float n) const {
     n = constrain(n, 0.0f, 1.0f);
-    return TILT_MAX - n * (TILT_MAX - TILT_MIN);
+    return calibration.data.tiltMax - n * (calibration.data.tiltMax - calibration.data.tiltMin);
 }
 
-// Map arousal 0–1 to lid gap in degrees
-float ServoEye::_arousalToGap(float arousal) const {
-    arousal = constrain(arousal, 0.0f, 1.0f);
-    return LID_HALF_GAP_CLOSED
-         + arousal * (LID_HALF_GAP_OPEN - LID_HALF_GAP_CLOSED);
-}
-
+// Compute lid angles from arousal (0=closed, 0.5=rest, 1=maxOpen)
+// and current gaze (tilt shifts lids, pan widens gap slightly)
 void ServoEye::_computeLidAngles(float tiltDeg, float panDeg, float gap,
                                   uint8_t& topDeg, uint8_t& botDeg) const {
-    // Center tracks tilt — eye looking up shifts both lids up
-    float tiltOffset = (tiltDeg - TILT_CENTER) * LID_TILT_FOLLOW;
-    float center     = LID_CENTER_DEG - tiltOffset;
+    // 'gap' parameter repurposed as arousal (0–1) for the new model
+    float arousal = constrain(gap, 0.0f, 1.0f);
 
-    float topF = center + LID_TOP_DIR * gap;
-    float botF = center + LID_BOT_DIR * gap;
+    float tiltOffset = (tiltDeg - (float)calibration.data.tiltCenter)
+                     * calibration.data.lidTiltFollow;
+    float panOffset  = fabsf(panDeg - (float)calibration.data.panCenter)
+                     / (float)(calibration.data.panMax - calibration.data.panCenter)
+                     * calibration.data.lidPanWiden;
+
+    // Interpolate top lid: arousal<0.5 → closed↔rest, arousal>0.5 → rest↔maxOpen
+    float topF, botF;
+    if (arousal <= 0.5f) {
+        float t = arousal * 2.0f;   // 0→1 over closed..rest
+        topF = calibration.data.lidTopClosed
+             + t * ((float)calibration.data.lidTopRest - calibration.data.lidTopClosed);
+        botF = calibration.data.lidBotClosed
+             + t * ((float)calibration.data.lidBotRest - calibration.data.lidBotClosed);
+    } else {
+        float t = (arousal - 0.5f) * 2.0f;   // 0→1 over rest..maxOpen
+        topF = calibration.data.lidTopRest
+             + t * ((float)calibration.data.lidTopMaxOpen - calibration.data.lidTopRest);
+        botF = calibration.data.lidBotRest
+             + t * ((float)calibration.data.lidBotMaxOpen - calibration.data.lidBotRest);
+        // Extra widening on pan at high arousal
+        topF -= panOffset * t * 5.0f;
+        botF += panOffset * t * 5.0f;
+    }
+
+    // Tilt follow: shift both lids proportionally with gaze
+    topF -= tiltOffset;
+    botF -= tiltOffset;
 
     topDeg = (uint8_t)constrain(topF, 0.0f, 180.0f);
     botDeg = (uint8_t)constrain(botF, 0.0f, 180.0f);

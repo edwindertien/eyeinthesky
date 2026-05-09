@@ -1,4 +1,14 @@
 #pragma once
+
+// ── Vision pipeline selection ─────────────────────────────────────────────────
+// Change default here, or switch at runtime with 'sal' / 'blob' serial command
+enum class VisionMode : uint8_t {
+    BLOBS,      // Motion blob tracker — robust, person-tracking, sleep on static
+    SALIENCY,   // Saliency map — colour/contrast/motion weighted, habituation
+};
+
+#define VISION_DEFAULT_MODE VisionMode::BLOBS
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  config.h — EyeWatcher central configuration
 //
@@ -103,18 +113,18 @@
 
 
 struct BehaviourConfig {
-    uint32_t idleToDozeMs    = 12000;
-    uint32_t dozeToSleepMs   = 40000;
-    uint32_t wakeDelayMs     = 300;
-    uint32_t blinkIntervalMs = 3500;
-    uint32_t blinkJitterMs   = 1500;
+    uint32_t idleToDozeMs    = 8000;   // no target → dozing after 8s
+    uint32_t dozeToSleepMs   = 20000;  // dozing → sleep after 20s
+    uint32_t wakeDelayMs     = 400;    // slight pause before tracking starts
+    uint32_t blinkIntervalMs = 5000;   // slower blink — more natural at rest
+    uint32_t blinkJitterMs   = 2000;   // wider jitter = less regular
     uint32_t blinkDurationMs = 110;
     float    scanPanAmp      = 18.0f;
     float    scanTiltAmp     = 6.0f;
     float    scanPeriodMs    = 9000.0f;
-    float    gazeAlphaIdle   = 0.04f;
-    float    gazeAlphaTrack  = 0.14f;
-    float    gazeAlphaFocus  = 0.06f;
+    float    gazeAlphaIdle   = 0.03f;   // slow lazy drift during scan
+    float    gazeAlphaTrack  = 0.18f;   // base tracking alpha (boosted by distance)
+    float    gazeAlphaFocus  = 0.05f;   // very slow settling in focus state
     float    flockInfluence  = 0.25f;
     uint32_t flockTimeoutMs  = 2500;
 };

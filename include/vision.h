@@ -1,48 +1,42 @@
 #pragma once
 #include <Arduino.h>
 #include "esp_camera.h"
-#include "states.h"
+#include "blob_tracker.h"
 #include "config.h"
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  vision.h — camera initialisation + Core 0 vision task
+//  vision.h — camera init + Core 0 vision task
 //
-//  Architecture:
-//    visionTaskStart() launches a FreeRTOS task pinned to Core 0.
-//    Every frame it posts a DetectionResult to detectionQueue (depth 1,
-//    overwrite) so Core 1 behaviour always gets the freshest result.
+//  Supports two pipelines switchable at runtime:
+//    VisionMode::BLOBS     — BlobTracker (motion only, person tracking)
+//    VisionMode::SALIENCY  — SaliencyMap (colour/contrast/motion weighted)
 //
-//  The task also maintains:
-//    debugFrame[]  — 8-bit grayscale thumbnail for ANSI display
-//    debugSaliency[] — 8-bit saliency map thumbnail
-//    debugTarget   — winning target in thumbnail coords
-//  All protected by debugMutex. Read with visionGetDebug().
+//  Both pipelines output to blobQueue as a BlobResult.
+//  Saliency mode produces a single-blob result from the saliency winner.
+//
+//  Switch with: setVisionMode(VisionMode::SALIENCY)
+//  Serial commands: 'sal' / 'blob'
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Thumbnail resolution for ANSI display and saliency map
-// QVGA (320×240) downsampled by factor 8 → 40×30 chars
-#define DBG_W   40
-#define DBG_H   30
-
 struct VisionDebug {
-    uint8_t  grey[DBG_W * DBG_H];      // downsampled greyscale
-    uint8_t  saliency[DBG_W * DBG_H];  // saliency map
-    uint8_t  motion[DBG_W * DBG_H];    // motion channel
-    int      targetX;                   // winning target in thumbnail coords
-    int      targetY;
-    float    targetConf;
+    uint8_t  motion[DBG_W * DBG_H];   // motion / saliency map thumbnail
+    uint8_t  blobs[DBG_W * DBG_H];    // blob boxes / saliency peak marker
+    int      blobCount;
+    float    fps;
     uint32_t frameCount;
-    uint32_t fps;                       // measured frames/sec on Core 0
+    VisionMode mode;                   // which pipeline is active
 };
 
-// ── Shared queue and mutex ────────────────────────────────────────────────────
-extern QueueHandle_t      detectionQueue;   // DetectionResult, depth 1
+extern QueueHandle_t      blobQueue;
 extern SemaphoreHandle_t  debugMutex;
 extern VisionDebug        visionDebug;
 
-// ── Public API ────────────────────────────────────────────────────────────────
+// Current active pipeline — readable from any task
+extern volatile VisionMode activeVisionMode;
+
 bool cameraInit();
 void visionTaskStart();
-
-// Safe copy of debug frame — call from Core 1
 bool visionGetDebug(VisionDebug& out);
+
+// Switch pipeline (thread-safe — vision task reads this each frame)
+void setVisionMode(VisionMode mode);

@@ -83,8 +83,7 @@ private:
     // Helpers
     float  _normToPan(float n)  const;
     float  _normToTilt(float n) const;
-    float  _arousalToGap(float arousal) const;
-    void   _computeLidAngles(float tiltDeg, float panDeg, float gap,
+    void   _computeLidAngles(float tiltDeg, float panDeg, float arousal,
                               uint8_t& topDeg, uint8_t& botDeg) const;
     void   _writeIfChanged(uint8_t ch, float deg, float& last,
                            float threshold = 0.6f);
