@@ -278,7 +278,8 @@ void Behaviour::_doDozing(uint32_t now, const BlobResult& blobs) {
 }
 
 void Behaviour::_doScared(uint32_t now, const BlobResult& blobs) {
-    // Lids snap shut, eye centers
+    // Cancel any blink -- lids must close fully and stay closed
+    eye.cancelBlink();
     eye.setArousal(0.0f, 0.5f);
     eye.setGazeDeg(calibration.data.panCenter, calibration.data.tiltCenter, 0.08f);
 

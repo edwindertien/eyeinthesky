@@ -1,5 +1,7 @@
 #include "calibration.h"
 #include "servo_eye.h"
+#include "behaviour.h"
+#include "states.h"
 
 ServoEye eye;
 
@@ -60,12 +62,21 @@ void ServoEye::blink() {
     _blinking            = true;
     _blinkStart          = millis();
     _arousalBeforeBlink  = _tgtArousal;
+    Serial.printf("[Blink] start  state=%s  arousal=%.2f  dur=%lums\n",
+                  stateName(behaviour_sm.getState()),
+                  _tgtArousal,
+                  (unsigned long)behaviour.blinkDurationMs);
 }
 
 // -- Convenience presets -------------------------------------------------------
 void ServoEye::setSleeping() {
+    _blinking = false;   // cancel any in-progress blink immediately
     setArousal(0.0f, 0.03f);
     setGazeDeg(calibration.data.panCenter, calibration.data.tiltCenter, 0.02f);
+}
+
+void ServoEye::cancelBlink() {
+    _blinking = false;
 }
 
 void ServoEye::setDozing() {
@@ -111,6 +122,8 @@ bool ServoEye::update() {
         } else {
             _curArousal = _arousalBeforeBlink;
             _blinking   = false;
+            Serial.printf("[Blink] end    dur=%lums\n",
+                          (unsigned long)(millis() - _blinkStart));
         }
     } else {
         _curArousal += _alphaLid * (_tgtArousal - _curArousal);

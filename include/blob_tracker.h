@@ -79,8 +79,10 @@ public:
                                       // 30 = robust to OV2640 sensor noise
     int     minBlobPixels   = 25;     // min blob size in SAL pixels (~0.5% frame)
                                       // raised -- small artifacts rarely real
-    int     maxBlobPixels   = 2000;   // max blob size (ignore huge regions)
+    int     maxBlobPixels   = 600;    // max blob size -- lower forces blob splitting
+                                      // 600/4800 = 12.5% of frame per blob
     int     mergeRadius     = 8;      // merge blobs closer than this (SAL pixels)
+    int     morphRadius     = 1;      // morphological open radius (was 2 -- lower=less merging)
     float   matchRadius     = 0.15f;  // max normalised distance for blob tracking
     uint32_t blobTimeoutMs  = 800;    // remove blob if not seen for this long
                                       // 800ms -- tracks expire quickly when motion stops
@@ -93,8 +95,8 @@ public:
                                       // (cancels 50Hz lamp flicker at ~11fps)
     int     maxPositionVar  = 6;      // max position variance (SAL px) for static
                                       // blob rejection -- lamp stays fixed, person moves
-    float   shiftThreshold  = 0.45f;  // fraction of frame with motion -> camera shift
-                                      // person=<0.20, partial shift=>0.45, full shift=>0.80
+    float   shiftThreshold  = 0.65f;  // fraction of frame with motion -> camera shift
+                                      // person=<0.20, noise=0.45, real shift=>0.65
 
 private:
     // Working buffers in PSRAM

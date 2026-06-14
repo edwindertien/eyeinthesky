@@ -461,11 +461,9 @@ BlobResult BlobTracker::process(const uint8_t* grey, int w, int h) {
         return {};
     }
 
-    // -- Camera-shift detection (raw frame, bypasses avg buffer) ----------------
-    // Compare current raw frame directly to background -- don't use the
-    // rolling average here because it dilutes sudden large changes across
-    // multiple frames and the threshold is never reached.
-    // A person moving covers <20% of pixels; a camera shift covers >50%.
+    // -- Camera-shift detection -----------------------------------------------
+    // Simple threshold: if >shiftThreshold fraction of pixels differ from
+    // background, the camera has been moved. 5s cooldown prevents re-triggering.
     {
         int motionCount = 0;
         int thr = motionThreshold;
@@ -476,18 +474,22 @@ BlobResult BlobTracker::process(const uint8_t* grey, int w, int h) {
         float motionFraction = (float)motionCount / BT_PIX;
 
         if (motionFraction > shiftThreshold && _bgReady) {
-            Serial.printf("[BlobTracker] Shift detected (%.0f%% raw motion) -> bgreset\n",
-                          motionFraction * 100.0f);
-            blobTrackerShiftDetected = true;  // signal behaviour layer
+            static uint32_t lastShiftMs = 0;
+            if (now - lastShiftMs > 5000) {
+                Serial.printf("[BlobTracker] Shift detected (%.0f%% motion) -> bgreset\n",
+                              motionFraction * 100.0f);
+                blobTrackerShiftDetected = true;
+                lastShiftMs = now;
+            }
             resetBackground();
-            return {};   // discard this frame
+            return {};
         }
     }
 
     _updateFrameAverage();   // rolling average -- cancels lamp flicker
     _computeMotion();
 
-    _morphOpen(2);           // radius 2 = removes ~4px noise specks
+    _morphOpen(morphRadius); // tunable -- lower = less blob merging
     _updateBackground();     // motion-gated -- only learns still pixels
 
     // Find raw blobs

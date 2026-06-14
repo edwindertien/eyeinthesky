@@ -8,6 +8,8 @@
 #include "vision.h"
 #include "behaviour.h"
 #include "calibration.h"
+#include "web_ui.h"
+#include <WiFi.h>
 #include "saliency.h"
 
 // ===========================================================================
@@ -166,16 +168,26 @@ static void printBlobs() {
     }
 }
 
-static String cmdBuf = "";
-static void handleSerial() {
-    while (Serial.available()) {
-        char c = Serial.read();
-        if (c == '\r') continue;
-        if (c == '\n') {
-            cmdBuf.trim(); cmdBuf.toLowerCase();
-            if (!ansiEnabled) Serial.printf("\n> %s\n", cmdBuf.c_str());
+// processCommand -- shared by serial and WebSocket handlers
+void processCommand(const String& raw) {
+    String cmdBuf = raw;
+    cmdBuf.trim(); cmdBuf.toLowerCase();
+    if (!ansiEnabled) Serial.printf("\n> %s\n", cmdBuf.c_str());
 
-            if      (cmdBuf == "info")    printInfo();
+            if      (cmdBuf == "info" || cmdBuf == "status") {
+                printInfo();
+                // Also print WiFi AP status
+                Serial.printf("  WiFi AP   : %s  IP: %s  clients: %d\n",
+                              WiFi.softAPSSID().c_str(),
+                              WiFi.softAPIP().toString().c_str(),
+                              WiFi.softAPgetStationNum());
+                Serial.printf("  BgSettled : %s\n",
+                              visionBgSettled ? "yes" : "no");
+                Serial.printf("  PSRAM free: %u  Heap free: %u\n",
+                              ESP.getFreePsram(), ESP.getFreeHeap());
+                Serial.printf("  Uptime    : %lus\n",
+                              (unsigned long)(millis()/1000));
+            }
             else if (cmdBuf == "scan")    i2cScan();
 
             else if (cmdBuf == "blink")   eye.blink();
@@ -235,8 +247,15 @@ static void handleSerial() {
                 blobTracker.minBlobAge = cmdBuf.substring(7).toInt();
             else if (cmdBuf.startsWith("avg "))
                 blobTracker.frameAvgCount = cmdBuf.substring(4).toInt();
-            else if (cmdBuf.startsWith("shift "))
+            else if (cmdBuf.startsWith("shift ")) {
                 blobTracker.shiftThreshold = cmdBuf.substring(6).toFloat();
+                Serial.printf("[Cmd] shiftThreshold = %.2f\n", blobTracker.shiftThreshold);
+            }
+            else if (cmdBuf == "shiftinfo") {
+                Serial.printf("[Shift] threshold=%.2f (lower=more sensitive)\n",
+                    blobTracker.shiftThreshold);
+                Serial.println("[Shift] type 'shift 0.4' to adjust");
+            }
             else if (cmdBuf.startsWith("bgint ")) {
                 blobTracker.bgResetIntervalMs = (uint32_t)(cmdBuf.substring(6).toInt() * 1000);
                 Serial.printf("[CMD] bgResetInterval = %lus\n",
@@ -270,8 +289,19 @@ static void handleSerial() {
             else if (cmdBuf.length() > 0)
                 Serial.printf("Unknown: '%s' -- type 'info'\n", cmdBuf.c_str());
 
-            cmdBuf = "";
-        } else if (cmdBuf.length() < 40) cmdBuf += c;
+}
+
+static String _serialBuf = "";
+static void handleSerial() {
+    while (Serial.available()) {
+        char ch = Serial.read();
+        if (ch == '\r') continue;
+        if (ch == '\n') {
+            processCommand(_serialBuf);
+            _serialBuf = "";
+        } else if (_serialBuf.length() < 40) {
+            _serialBuf += ch;
+        }
     }
 }
 
@@ -309,6 +339,7 @@ void setup() {
     }
 
     behaviour_sm.begin();
+    webUiBegin();
     lastReport = millis();
     Serial.println("[Boot] Ready -- 'ansi' for live display  'info' for status");
 }
@@ -316,6 +347,7 @@ void setup() {
 void loop() {
     uint32_t now = millis();
     handleSerial();
+    webUiLoop();
     behaviour_sm.update();
     eye.update();
 
@@ -325,14 +357,17 @@ void loop() {
         if (visionGetDebug(dbg)) renderAnsi(dbg);
     }
 
-    if (!ansiEnabled && now - lastReport >= 3000) {
+    if (now - lastReport >= 3000) {
         lastReport = now;
         BlobResult blobs = {};
         if (blobQueue) xQueuePeek(blobQueue, &blobs, 0);
-        Serial.printf("[Eye] %s  pan=%.1f tilt=%.1f arousal=%.2f  blobs=%d  %umA\n",
-                      stateName(behaviour_sm.getState()),
-                      eye.getPanDeg(), eye.getTiltDeg(), eye.getArousal(),
-                      blobs.count, servoBoard.readCurrentMA());
+        char logbuf[80];
+        snprintf(logbuf, sizeof(logbuf), "[Eye] %s pan=%.0f tilt=%.0f ar=%.2f blobs=%d",
+                 stateName(behaviour_sm.getState()),
+                 eye.getPanDeg(), eye.getTiltDeg(), eye.getArousal(), blobs.count);
+        webUiLog(logbuf);
+        if (!ansiEnabled)
+            Serial.printf("%s  %umA\n", logbuf, servoBoard.readCurrentMA());
     }
 
     delay(20);
