@@ -10,30 +10,38 @@
 #include "calibration.h"
 #include "saliency.h"
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  main.cpp — EyeWatcher Stage 2a (blob tracker edition)
+// ===========================================================================
+//  main.cpp -- EyeWatcher Stage 2a (blob tracker edition)
 //
 //  Serial commands:
-//    info          — status dump
-//    scan          — I2C bus scan
-//    ansi          — toggle ANSI live display (use pio device monitor)
-//    blobs         — print current blob list
-//    cal           — enter servo calibration mode
-//    bgt <n>       — set motion threshold (e.g. "bgt 20")
-//    bgr <n>       — set bg learning rate ×1000 (e.g. "bgr 5")
-//    minblob <n>   — min blob size in pixels
-//    dwell <n>     — override dwell max ms
-//    bgreset       — force background reset
+//    info          -- status dump
+//    scan          -- I2C bus scan
+//    ansi          -- toggle ANSI live display (use pio device monitor)
+//    blobs         -- print current blob list
+//    cal           -- enter servo calibration mode
+//    bgt <n>       -- set motion threshold (e.g. "bgt 20")
+//    bgr <n>       -- set bg learning rate x1000 (e.g. "bgr 5")
+//    minblob <n>   -- min blob size in pixels
+//    dwell <n>     -- override dwell max ms
+//    bgreset       -- force background reset
 //    blink / home / reboot
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 BehaviourConfig behaviour;
+
+// Camera-to-servo mapping -- tune with serial commands or edit defaults here
+float camPanScale   = 1.0f;   // reduce for wide-angle (e.g. 0.5 for 120deg FOV)
+float camTiltScale  = 1.0f;
+float camPanOffset  = 0.0f;   // positive = camera sees scene shifted right
+float camTiltOffset = 0.0f;   // positive = camera mounted above eye center
+bool  camMirrorX    = false;
+bool  camMirrorY    = false;
 
 static bool     ansiEnabled = false;
 static uint32_t lastAnsi    = 0;
 static uint32_t lastReport  = 0;
 
-// ── ANSI helpers ──────────────────────────────────────────────────────────────
+// -- ANSI helpers --------------------------------------------------------------
 #define ANSI_HOME  "\033[H"
 #define ANSI_CLEAR "\033[2J\033[H"
 #define ANSI_BOLD  "\033[1m"
@@ -68,7 +76,7 @@ static void renderAnsi(const VisionDebug& dbg) {
                   blobTracker.frameAvgCount,
                   (unsigned long)blobTracker.blobTimeoutMs);
 
-    // Column headers — change label based on mode
+    // Column headers -- change label based on mode
     const char* leftLabel  = (dbg.mode == VisionMode::BLOBS) ? "[ MOTION MASK ]" : "[ SALIENCY MAP ]";
     const char* rightLabel = (dbg.mode == VisionMode::BLOBS) ? "[ BLOBS ]"       : "[ SALIENCY PEAK ]";
     char hdr[DBG_W*2+8];
@@ -115,16 +123,16 @@ static void i2cScan() {
 }
 
 static void printInfo() {
-    Serial.println("\n╔══════════════════════════════════════╗");
-    Serial.println("║   EyeWatcher — Blob Tracker          ║");
-    Serial.println("╚══════════════════════════════════════╝");
+    Serial.println("\n╔======================================╗");
+    Serial.println("║   EyeWatcher -- Blob Tracker          ║");
+    Serial.println("╚======================================╝");
     Serial.printf("  State      : %s\n", stateName(behaviour_sm.getState()));
     Serial.printf("  Pan/Tilt   : %.1f / %.1f\n", eye.getPanDeg(), eye.getTiltDeg());
     Serial.printf("  Arousal    : %.2f\n", eye.getArousal());
     Serial.printf("  PSRAM free : %u\n", ESP.getFreePsram());
     Serial.println("\n  Blob tracker settings:");
     Serial.printf("    motionThreshold : %d\n", blobTracker.motionThreshold);
-    Serial.printf("    bgAlphaInt      : %d (×0.001)\n", blobTracker.bgAlphaInt);
+    Serial.printf("    bgAlphaInt      : %d (x0.001)\n", blobTracker.bgAlphaInt);
     Serial.printf("    minBlobPixels   : %d\n", blobTracker.minBlobPixels);
     Serial.printf("    maxBlobPixels   : %d\n", blobTracker.maxBlobPixels);
     Serial.printf("    matchRadius     : %.2f\n", blobTracker.matchRadius);
@@ -242,8 +250,25 @@ static void handleSerial() {
                 eye.setGazeDeg(cmdBuf.substring(4).toFloat(), eye.getTiltDeg(), 0.2f);
             else if (cmdBuf.startsWith("tilt "))
                 eye.setGazeDeg(eye.getPanDeg(), cmdBuf.substring(5).toFloat(), 0.2f);
+            // Camera mapping tuning -- no recompile needed
+            else if (cmdBuf == "caminfo") {
+                Serial.printf("[Cam] panScale=%.2f  tiltScale=%.2f\n",
+                              camPanScale, camTiltScale);
+                Serial.printf("[Cam] panOffset=%.2f  tiltOffset=%.2f\n",
+                              camPanOffset, camTiltOffset);
+                Serial.printf("[Cam] mirrorX=%s  mirrorY=%s\n",
+                              camMirrorX ? "yes" : "no",
+                              camMirrorY ? "yes" : "no");
+                Serial.println("[Cam] Tune: campan <f>  camtilt <f>  camoffx <f>  camoffy <f>  camflipx  camflipy");
+            }
+            else if (cmdBuf.startsWith("campan "))   camPanScale   = cmdBuf.substring(7).toFloat();
+            else if (cmdBuf.startsWith("camtilt "))  camTiltScale  = cmdBuf.substring(8).toFloat();
+            else if (cmdBuf.startsWith("camoffx "))  camPanOffset  = cmdBuf.substring(8).toFloat();
+            else if (cmdBuf.startsWith("camoffy "))  camTiltOffset = cmdBuf.substring(8).toFloat();
+            else if (cmdBuf == "camflipx") { camMirrorX = !camMirrorX; Serial.printf("[Cam] mirrorX=%s\n", camMirrorX?"on":"off"); }
+            else if (cmdBuf == "camflipy") { camMirrorY = !camMirrorY; Serial.printf("[Cam] mirrorY=%s\n", camMirrorY?"on":"off"); }
             else if (cmdBuf.length() > 0)
-                Serial.printf("Unknown: '%s' — type 'info'\n", cmdBuf.c_str());
+                Serial.printf("Unknown: '%s' -- type 'info'\n", cmdBuf.c_str());
 
             cmdBuf = "";
         } else if (cmdBuf.length() < 40) cmdBuf += c;
@@ -255,12 +280,12 @@ void setup() {
     uint32_t t = millis();
     while (!Serial && millis()-t < 2000) delay(10);
 
-    Serial.println("\n╔══════════════════════════════════════╗");
-    Serial.println("║   EyeWatcher — Blob Tracker Edition  ║");
-    Serial.println("╚══════════════════════════════════════╝");
+    Serial.println("\n╔======================================╗");
+    Serial.println("║   EyeWatcher -- Blob Tracker Edition  ║");
+    Serial.println("╚======================================╝");
     Serial.printf("  PSRAM: %u  Heap: %u\n\n", ESP.getPsramSize(), ESP.getFreeHeap());
 
-    // Camera first — before Wire to avoid I2C peripheral conflict
+    // Camera first -- before Wire to avoid I2C peripheral conflict
     if (!blobTracker.begin()) {
         Serial.println("[FATAL] BlobTracker PSRAM alloc failed");
         while(true) delay(1000);
@@ -268,7 +293,7 @@ void setup() {
 
     bool cameraOk = cameraInit();
     if (!cameraOk)
-        Serial.println("[WARN] Camera failed — servo-only mode");
+        Serial.println("[WARN] Camera failed -- servo-only mode");
 
     // I2C + servos after camera
     Wire.begin(I2C_SDA, I2C_SCL, I2C_FREQ);
@@ -285,7 +310,7 @@ void setup() {
 
     behaviour_sm.begin();
     lastReport = millis();
-    Serial.println("[Boot] Ready — 'ansi' for live display  'info' for status");
+    Serial.println("[Boot] Ready -- 'ansi' for live display  'info' for status");
 }
 
 void loop() {

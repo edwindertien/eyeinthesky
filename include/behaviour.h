@@ -5,23 +5,23 @@
 #include "servo_eye.h"
 #include "blob_tracker.h"
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  behaviour.h — eye state machine driven by blob tracker
+// =========================================================================
+//  behaviour.h -- eye state machine
 //
-//  States:
-//    SLEEPING  — lids closed, no motion detected for a long time
-//    WAKING    — motion detected, lids opening
-//    SCANNING  — lazy scan, no blobs but recently awake
-//    TRACKING  — locked onto a blob, dwelling then shifting
-//    FOCUS     — sustained gaze on one blob (long dwell)
-//    DOZING    — few/no blobs, drifting toward sleep
+//  State sequence:
 //
-//  Blob selection:
-//    Round-robin between active blobs.
-//    Each blob gets a dwell of DWELL_MIN..DWELL_MAX ms.
-//    After dwell, shift to next blob (prefer large travel).
-//    Blob disappears when person stops moving → background absorbs it.
-// ═══════════════════════════════════════════════════════════════════════════
+//    BOOT -> SLEEPING (lids closed, bg model building)
+//         -> (visionBgSettled) WAKING (lids open slowly, bg reset scheduled)
+//         -> (bg settled) SCANNING (lazy scan, waiting for stable blobs)
+//         -> (blobs + bg settled) TRACKING (committed gaze, dwell/shift)
+//         -> (sustained) FOCUS (intense stillness)
+//
+//    Any state -> SCARED (camera shift detected)
+//              -> lids snap shut, wait for settle
+//              -> WAKING (cautious reopen)
+//
+//    SCANNING -> DOZING -> SLEEPING (no motion)
+// =========================================================================
 
 class Behaviour {
 public:
@@ -30,28 +30,29 @@ public:
     EyeState getState() const { return _state; }
 
 private:
-    EyeState _state   = EyeState::SCANNING;
-    uint32_t _stateMs = 0;
+    EyeState _state    = EyeState::SLEEPING;
+    uint32_t _stateMs  = 0;
 
     // Committed gaze
-    float    _gazeX       = 0.5f;  // where eye is currently pointed (normalised)
+    float    _gazeX       = 0.5f;
     float    _gazeY       = 0.5f;
-    uint32_t _dwellStartMs = 0;    // when we committed to current blob
-    uint8_t  _targetBlobId = 0;    // which blob ID we're tracking (0=none)
-
-    // Blob round-robin
-    int      _lastBlobIdx  = 0;    // index into last result's blob array
+    uint32_t _dwellStartMs = 0;
+    uint8_t  _targetBlobId = 0;
+    bool     _hasCommitted = false;
 
     // Startle
-    uint32_t _startleMs    = 0;
+    uint32_t _startleMs   = 0;
 
     // Blink
-    uint32_t _lastBlinkMs  = 0;
+    uint32_t _lastBlinkMs = 0;
 
-    // Last detection
+    // Last motion
     uint32_t _lastMotionMs = 0;
-    uint32_t _wakeResetMs  = 0;   // when resetBackground() was last called on wake
-    bool     _wakeResetDone = false; // second reset (post-open) has fired
+
+    // Wake/reset tracking
+    uint32_t _wakeResetMs   = 0;
+    bool     _wakeResetDone = false;
+    bool     _isFirstBoot   = true;   // true until first wake from sleep
 
     // Scan oscillator
     float    _scanT = 0.0f;
@@ -59,17 +60,16 @@ private:
     void _setState(EyeState s);
     float _arousalForState(EyeState s) const;
     void _handleBlink(uint32_t now);
+    bool _dwellExpired(uint32_t now) const;
+    int  _pickNextBlob(const BlobResult& blobs) const;
+
     void _doSleeping(uint32_t now, const BlobResult& blobs);
     void _doWaking(uint32_t now);
     void _doScanning(uint32_t now, const BlobResult& blobs);
     void _doTracking(uint32_t now, const BlobResult& blobs);
+    void _doFocus(uint32_t now, const BlobResult& blobs);
     void _doDozing(uint32_t now, const BlobResult& blobs);
-
-    // Pick next blob to look at (round-robin, prefer large travel)
-    int _pickNextBlob(const BlobResult& blobs) const;
-
-    // Has dwell time expired for current target?
-    bool _dwellExpired(uint32_t now) const;
+    void _doScared(uint32_t now, const BlobResult& blobs);
 };
 
 extern Behaviour behaviour_sm;

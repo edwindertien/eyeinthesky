@@ -1,16 +1,16 @@
 #pragma once
 
-// ── Vision pipeline selection ─────────────────────────────────────────────────
+// -- Vision pipeline selection -------------------------------------------------
 // Change default here, or switch at runtime with 'sal' / 'blob' serial command
 enum class VisionMode : uint8_t {
-    BLOBS,      // Motion blob tracker — robust, person-tracking, sleep on static
-    SALIENCY,   // Saliency map — colour/contrast/motion weighted, habituation
+    BLOBS,      // Motion blob tracker -- robust, person-tracking, sleep on static
+    SALIENCY,   // Saliency map -- colour/contrast/motion weighted, habituation
 };
 
 #define VISION_DEFAULT_MODE VisionMode::BLOBS
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  config.h — EyeWatcher central configuration
+// ===========================================================================
+//  config.h -- EyeWatcher central configuration
 //
 //  Hardware:
 //    Seeed XIAO ESP32-S3 Sense
@@ -23,8 +23,8 @@ enum class VisionMode : uint8_t {
 //    ch2 = lower eyelid
 //    ch3 = upper eyelid
 //
-//  I2C: GPIO5 (SDA), GPIO6 (SCL) — confirmed for Grove Shield + ESP32-S3
-// ═══════════════════════════════════════════════════════════════════════════
+//  I2C: GPIO5 (SDA), GPIO6 (SCL) -- confirmed for Grove Shield + ESP32-S3
+// ===========================================================================
 
 #define WIFI_AP_SSID        "EyeWatcher"
 #define WIFI_AP_PASSWORD    "watching1"
@@ -35,21 +35,21 @@ enum class VisionMode : uint8_t {
 #define UDP_MULTICAST_PORT  5555
 #define UNIT_ID             1
 
-// ── I2C ──────────────────────────────────────────────────────────────────────
+// -- I2C ----------------------------------------------------------------------
 #define I2C_SDA             5
 #define I2C_SCL             6
 #define I2C_FREQ            100000
 
-// ── M5Stack 8Servo Unit ──────────────────────────────────────────────────────
+// -- M5Stack 8Servo Unit ------------------------------------------------------
 #define M5SERVO8_ADDR       0x25
 
-// ── Servo channels (as physically wired) ─────────────────────────────────────
-#define SERVO_CH_PAN        0         // ch0 — eyeball left/right
-#define SERVO_CH_TILT       1         // ch1 — eyeball up/down
-#define SERVO_CH_LID_BOT    2         // ch2 — lower eyelid
-#define SERVO_CH_LID_TOP    3         // ch3 — upper eyelid
+// -- Servo channels (as physically wired) -------------------------------------
+#define SERVO_CH_PAN        0         // ch0 -- eyeball left/right
+#define SERVO_CH_TILT       1         // ch1 -- eyeball up/down
+#define SERVO_CH_LID_BOT    2         // ch2 -- lower eyelid
+#define SERVO_CH_LID_TOP    3         // ch3 -- upper eyelid
 
-// ── Eyeball limits ────────────────────────────────────────────────────────────
+// -- Eyeball limits ------------------------------------------------------------
 #define PAN_CENTER          90
 #define PAN_MIN             58
 #define PAN_MAX             122
@@ -58,7 +58,7 @@ enum class VisionMode : uint8_t {
 #define TILT_MIN            68
 #define TILT_MAX            102
 
-// ── Eyelid model ──────────────────────────────────────────────────────────────
+// -- Eyelid model --------------------------------------------------------------
 // Lids are controlled by a CENTER position (follows tilt) and a GAP (inter-lid
 // distance). Top and bottom lids move symmetrically around the center.
 //
@@ -67,17 +67,17 @@ enum class VisionMode : uint8_t {
 //
 // Adjust these to your mechanism. Tune LID_CENTER_OPEN to frame the iris.
 // If a lid moves the wrong direction, flip its OPEN/CLOSED by swapping the
-// sign of its contribution in _lidToDeg() — or swap angles below.
+// sign of its contribution in _lidToDeg() -- or swap angles below.
 
 // Resting center when gaze is horizontal (tracks tilt offset from here)
-#define LID_CENTER_DEG      85        // degrees — midpoint between lids at rest
+#define LID_CENTER_DEG      85        // degrees -- midpoint between lids at rest
 
 // How many degrees each lid moves from center to fully open (half the gap)
-// e.g. 15 means top goes to 70°, bottom to 100° when open
-#define LID_HALF_GAP_OPEN   15        // degrees — tune to frame your iris
+// e.g. 15 means top goes to 70 deg, bottom to 100 deg when open
+#define LID_HALF_GAP_OPEN   15        // degrees -- tune to frame your iris
 
 // How many degrees each lid moves from center to fully closed (blink)
-#define LID_HALF_GAP_CLOSED 3         // degrees — nearly zero gap = closed
+#define LID_HALF_GAP_CLOSED 3         // degrees -- nearly zero gap = closed
 
 // How much the lid center follows tilt (1.0 = 1:1, 0.5 = half movement)
 #define LID_TILT_FOLLOW     0.6f
@@ -90,7 +90,7 @@ enum class VisionMode : uint8_t {
 // Lower lid servo direction
 #define LID_BOT_DIR         (-1)
 
-// ── Camera (fixed by hardware) ────────────────────────────────────────────────
+// -- Camera (fixed by hardware) ------------------------------------------------
 #define CAM_PIN_PWDN        -1
 #define CAM_PIN_RESET       -1
 #define CAM_PIN_XCLK        10
@@ -108,15 +108,34 @@ enum class VisionMode : uint8_t {
 #define CAM_PIN_HREF        47
 #define CAM_PIN_PCLK        13
 #define CAM_XCLK_FREQ       20000000
+// -- Camera-to-servo coordinate mapping ----------------------------------
+// Tune these to match your camera's field of view and mounting position.
+//
+// CAM_PAN_SCALE / CAM_TILT_SCALE:
+//   Ratio of camera FOV to servo travel range.
+//   Wide-angle lens (120 deg FOV, 60 deg servo): set 0.5
+//   Normal lens (~60 deg FOV, 60 deg servo): set 1.0
+//   If eye overshoots targets: reduce scale
+//   If eye never reaches edges: increase scale
+// Runtime-tunable -- defined in main.cpp, adjust with serial commands
+// or change defaults here and recompile.
+extern float camPanScale;    // default 1.0 -- reduce for wide-angle lens
+extern float camTiltScale;   // default 1.0
+extern float camPanOffset;   // default 0.0 -- shift center horizontally
+extern float camTiltOffset;  // default 0.0 -- shift center vertically
+extern bool  camMirrorX;     // default false
+extern bool  camMirrorY;     // default false
+
+
 #define CAM_FRAME_SIZE      FRAMESIZE_QVGA
 #define CAM_JPEG_QUALITY    15
 
 
 struct BehaviourConfig {
-    uint32_t idleToDozeMs    = 8000;   // no target → dozing after 8s
-    uint32_t dozeToSleepMs   = 20000;  // dozing → sleep after 20s
+    uint32_t idleToDozeMs    = 8000;   // no target -> dozing after 8s
+    uint32_t dozeToSleepMs   = 20000;  // dozing -> sleep after 20s
     uint32_t wakeDelayMs     = 400;    // slight pause before tracking starts
-    uint32_t blinkIntervalMs = 5000;   // slower blink — more natural at rest
+    uint32_t blinkIntervalMs = 5000;   // slower blink -- more natural at rest
     uint32_t blinkJitterMs   = 2000;   // wider jitter = less regular
     uint32_t blinkDurationMs = 110;
     float    scanPanAmp      = 18.0f;

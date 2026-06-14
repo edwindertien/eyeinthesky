@@ -3,6 +3,7 @@
 #include <cmath>
 
 BlobTracker blobTracker;
+volatile bool blobTrackerShiftDetected = false;
 
 // -- begin ---------------------------------------------------------------------
 bool BlobTracker::begin() {
@@ -67,8 +68,9 @@ void BlobTracker::resetBackground() {
     for (int t = 0; t < MAX_BLOBS; t++) _tracks[t] = {};
 
     // Set _bgReady=false so process() runs the fast warmup on next call
-    _bgReady     = false;
-    _lastBgReset = millis();
+    _bgReady        = false;
+    _bgUpdateCount  = 0;   // delay force-learn until model stabilises
+    _lastBgReset    = millis();
     Serial.println("[BlobTracker] Background reset -- will re-learn on next frame");
 }
 
@@ -113,11 +115,18 @@ void BlobTracker::_updateFrameAverage() {
 // Motion-gated EMA -- only update background at still pixels
 void BlobTracker::_updateBackground() {
     int alpha = bgAlphaInt;
+    _bgUpdateCount++;
+
+    // Every 60 frames: slow force-learn pass on ALL pixels including motion ones.
+    // Prevents persistent noise pixels being permanently excluded from the model.
+    bool forceLearn = (_bgUpdateCount % 60 == 0);
+
     for (int i = 0; i < BT_PIX; i++) {
-        if (_motionMask[i]) continue;   // don't absorb moving pixels
-        int bg = _bgModel[i];
-        // Use averaged frame for background learning too
-        _bgModel[i] = (uint8_t)(bg + (alpha * ((int)_avgGrey[i] - bg)) / 1000);
+        int bg  = _bgModel[i];
+        int cur = (int)_avgGrey[i];
+        if (_motionMask[i] && !forceLearn) continue;
+        int a = forceLearn ? 2 : alpha;  // very slow on force pass
+        _bgModel[i] = (uint8_t)(bg + (a * (cur - bg)) / 1000);
     }
 }
 
@@ -382,14 +391,12 @@ BlobResult BlobTracker::_buildResult(uint32_t now) {
         if (_tracks[t].normX < EDGE || _tracks[t].normX > 1.0f - EDGE ||
             _tracks[t].normY < EDGE || _tracks[t].normY > 1.0f - EDGE) continue;
 
-        // Static blob rejection: if blob centroid hasn't moved in the last
-        // 30 frames (tracked via accumulated position variance) skip it.
-        // Uses velocity magnitude as proxy -- truly static = ~0 velocity
+        // Require actual motion -- velocity must be non-trivial.
+        // Removed age<20 exemption: young stationary blobs (noise, stopped
+        // person) should not keep the eye awake.
         float speed = sqrtf(_tracks[t].vx * _tracks[t].vx +
                             _tracks[t].vy * _tracks[t].vy);
-        // Allow blobs that have moved recently OR are young (still arriving)
-        bool isMoving = (speed > 0.005f || _tracks[t].age < 20);
-        if (!isMoving) continue;
+        if (speed <= 0.005f) continue;
 
         float ageFactor  = fminf(1.0f, _tracks[t].age / 10.0f);
         float fresh      = 1.0f - (float)(now - _tracks[t].lastSeenMs) / blobTimeoutMs;
@@ -454,24 +461,31 @@ BlobResult BlobTracker::process(const uint8_t* grey, int w, int h) {
         return {};
     }
 
-    _updateFrameAverage();   // rolling average -- cancels lamp flicker
-    _computeMotion();
-
-    // -- Camera-shift detection ------------------------------------------------
-    // Count fraction of pixels with motion. A person covers <20% of frame.
-    // A camera shift covers >60% of frame. Trigger auto-reset when this happens.
+    // -- Camera-shift detection (raw frame, bypasses avg buffer) ----------------
+    // Compare current raw frame directly to background -- don't use the
+    // rolling average here because it dilutes sudden large changes across
+    // multiple frames and the threshold is never reached.
+    // A person moving covers <20% of pixels; a camera shift covers >50%.
     {
         int motionCount = 0;
-        for (int i = 0; i < BT_PIX; i++)
-            if (_motionMask[i] > 0) motionCount++;
+        int thr = motionThreshold;
+        for (int i = 0; i < BT_PIX; i++) {
+            int diff = abs((int)_workGrey[i] - (int)_bgModel[i]);
+            if (diff >= thr) motionCount++;
+        }
         float motionFraction = (float)motionCount / BT_PIX;
 
         if (motionFraction > shiftThreshold && _bgReady) {
-            Serial.printf("[BlobTracker] Scene shift detected (%.0f%% motion) -> resetting background\n", motionFraction * 100.0f);
+            Serial.printf("[BlobTracker] Shift detected (%.0f%% raw motion) -> bgreset\n",
+                          motionFraction * 100.0f);
+            blobTrackerShiftDetected = true;  // signal behaviour layer
             resetBackground();
-            return {};   // skip this frame entirely
+            return {};   // discard this frame
         }
     }
+
+    _updateFrameAverage();   // rolling average -- cancels lamp flicker
+    _computeMotion();
 
     _morphOpen(2);           // radius 2 = removes ~4px noise specks
     _updateBackground();     // motion-gated -- only learns still pixels
