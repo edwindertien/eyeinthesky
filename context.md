@@ -1,4 +1,4 @@
-# EyeWatcher -- Development Context
+# EyeInTheSky -- Development Context
 
 This document records the key architectural decisions, bugs encountered, and rationale behind choices made during development. Intended as a reference for future maintenance and for understanding why things are the way they are.
 
