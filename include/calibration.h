@@ -3,29 +3,29 @@
 #include <Preferences.h>
 #include "m5servo8.h"
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  calibration.h — servo calibration with NVS storage
+// ===========================================================================
+//  calibration.h -- servo calibration with NVS storage
 //
 //  Eyeball: pan and tilt each have min / center / max
 //
 //  Eyelids: 3 positions per lid (all in servo degrees)
-//    Closed   — fully shut (blink / sleep)
-//    Rest     — normal relaxed open, iris comfortably framed
-//    MaxOpen  — widest possible (surprise / high arousal)
+//    Closed   -- fully shut (blink / sleep)
+//    Rest     -- normal relaxed open, iris comfortably framed
+//    MaxOpen  -- widest possible (surprise / high arousal)
 //
 //  Animation mapping:
-//    arousal 0.0 → Closed
-//    arousal 0.5 → Rest     (default awake)
-//    arousal 1.0 → MaxOpen  (alert / surprised)
+//    arousal 0.0 -> Closed
+//    arousal 0.5 -> Rest     (default awake)
+//    arousal 1.0 -> MaxOpen  (alert / surprised)
 //    Tilt offsets all three positions proportionally (lid follows gaze)
-//    Pan slightly widens the rest↔maxOpen gap (foreshortening)
+//    Pan slightly widens the rest<->maxOpen gap (foreshortening)
 //
-//  Direction is implicit — whichever angle is numerically smaller is
+//  Direction is implicit -- whichever angle is numerically smaller is
 //  "more closed" for that lid. No direction flag needed.
-// ═══════════════════════════════════════════════════════════════════════════
+// ===========================================================================
 
 struct CalibData {
-    // ── Eyeball ──────────────────────────────────────────────────────────────
+    // -- Eyeball --------------------------------------------------------------
     uint8_t panCenter;
     uint8_t panMin;
     uint8_t panMax;
@@ -33,7 +33,7 @@ struct CalibData {
     uint8_t tiltMin;
     uint8_t tiltMax;
 
-    // ── Eyelids — 3 positions each ───────────────────────────────────────────
+    // -- Eyelids -- 3 positions each -------------------------------------------
     uint8_t lidTopClosed;    // upper lid: fully shut
     uint8_t lidTopRest;      // upper lid: normal open (iris framed)
     uint8_t lidTopMaxOpen;   // upper lid: wide open (surprise/alert)
@@ -42,12 +42,12 @@ struct CalibData {
     uint8_t lidBotRest;      // lower lid: normal open
     uint8_t lidBotMaxOpen;   // lower lid: wide open
 
-    // ── Lid dynamics ─────────────────────────────────────────────────────────
+    // -- Lid dynamics ---------------------------------------------------------
     float   lidTiltFollow;   // how much tilt shifts lids (0=none 1=full 1:1)
     float   lidPanWiden;     // extra gap widening on pan (foreshortening)
 };
 
-// Safe defaults — adjust after first flash via calibration mode
+// Safe defaults -- adjust after first flash via calibration mode
 static const CalibData CALIB_DEFAULTS = {
     // Pan:  center  min   max
                90,   58,  122,
@@ -62,11 +62,15 @@ static const CalibData CALIB_DEFAULTS = {
     0.3f    // lidPanWiden
 };
 
-// ── Calibration sub-axes ──────────────────────────────────────────────────────
+// -- Calibration sub-axes ------------------------------------------------------
 enum class CalibAxis : uint8_t {
     PAN, TILT,
-    LID_TOP,   // upper lid — nudge moves current position
-    LID_BOT,   // lower lid
+    LID_TOP,
+    LID_BOT,
+};
+
+enum class PanTiltPos : uint8_t {
+    CENTER, MIN, MAX
 };
 
 enum class LidPos : uint8_t {
@@ -81,13 +85,16 @@ public:
     bool run();     // blocking interactive mode
     void apply();   // push data into servo_eye model
 
-    CalibData data;
+    CalibData data;      // committed values (NVS / loaded)
+    CalibData work;      // working copy -- edited live, committed on 'save'
+    bool      _dirty = false;  // true if work differs from data
 
 private:
     Preferences _prefs;
 
-    CalibAxis _axis    = CalibAxis::PAN;
-    LidPos    _lidPos  = LidPos::REST;
+    CalibAxis  _axis       = CalibAxis::PAN;
+    LidPos     _lidPos     = LidPos::REST;
+    PanTiltPos _panTiltPos = PanTiltPos::CENTER;
     uint8_t   _rawAngle = 90;
     bool      _changed  = false;
 

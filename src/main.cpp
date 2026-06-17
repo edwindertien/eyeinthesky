@@ -245,6 +245,22 @@ void processCommand(const String& raw) {
                 blobTracker.minBlobPixels = cmdBuf.substring(8).toInt();
             else if (cmdBuf.startsWith("minage "))
                 blobTracker.minBlobAge = cmdBuf.substring(7).toInt();
+            else if (cmdBuf.startsWith("maxblob "))
+                blobTracker.maxBlobPixels = cmdBuf.substring(8).toInt();
+            else if (cmdBuf.startsWith("morph "))
+                blobTracker.morphRadius = cmdBuf.substring(6).toInt();
+            else if (cmdBuf.startsWith("habit.str "))
+                blobTracker.habitStrength = cmdBuf.substring(10).toFloat();
+            else if (cmdBuf.startsWith("blobtimeout "))
+                blobTracker.blobTimeoutMs = (uint32_t)cmdBuf.substring(12).toInt();
+            else if (cmdBuf.startsWith("scandoze "))
+                behaviour.idleToDozeMs = (uint32_t)(cmdBuf.substring(9).toInt() * 1000);
+            else if (cmdBuf.startsWith("dozesleep "))
+                behaviour.dozeToSleepMs = (uint32_t)(cmdBuf.substring(10).toInt() * 1000);
+            else if (cmdBuf.startsWith("habit.dec "))
+                blobTracker.habitDecay = cmdBuf.substring(10).toFloat();
+            else if (cmdBuf.startsWith("habit.thr "))
+                blobTracker.habitThreshold = cmdBuf.substring(10).toFloat();
             else if (cmdBuf.startsWith("avg "))
                 blobTracker.frameAvgCount = cmdBuf.substring(4).toInt();
             else if (cmdBuf.startsWith("shift ")) {

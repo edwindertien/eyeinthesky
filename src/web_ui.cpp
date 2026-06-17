@@ -5,6 +5,7 @@
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include "vision.h"
+#include "config.h"
 #include "blob_tracker.h"
 #include "behaviour.h"
 #include "servo_eye.h"
@@ -105,6 +106,18 @@ static void pushStatusOnly() {
     if (hasDbg)
         doc["mode"]  = (dbg.mode == VisionMode::BLOBS) ? "blob" : "sal";
 
+    // Tunable parameters -- sent in every status frame so UI stays in sync
+    JsonObject p = doc["params"].to<JsonObject>();
+    p["bgt"]      = blobTracker.motionThreshold;
+    p["bgr"]      = blobTracker.bgAlphaInt;
+    p["minblob"]  = blobTracker.minBlobPixels;
+    p["minage"]   = blobTracker.minBlobAge;
+    p["shift"]    = (int)(blobTracker.shiftThreshold * 100);  // 0-100
+    p["timeout"]  = (int)blobTracker.blobTimeoutMs;
+    p["habitstr"] = (int)(blobTracker.habitStrength * 1000);  // 0-100
+    p["scandoze"] = (int)(behaviour.idleToDozeMs / 1000);     // seconds
+    p["dozesleep"]= (int)(behaviour.dozeToSleepMs / 1000);
+
     // Blob list (small)
     JsonArray blobArr = doc["blobList"].to<JsonArray>();
     for (int i = 0; i < blobs.count; i++) {
@@ -198,7 +211,15 @@ canvas{width:100%;display:block;image-rendering:pixelated}
 #cmdinput{display:flex;gap:4px;padding:6px 8px;border-top:1px solid #222}
 #cmd{flex:1;background:#0a0a0a;color:#ddd;border:1px solid #333;padding:6px 8px;font-family:monospace;font-size:13px;border-radius:4px}
 #sendbtn{background:#1e3a1e;color:#7ef77e;border:1px solid #2a8f2a;padding:6px 12px;border-radius:4px;cursor:pointer;font-family:monospace}
-#log{height:120px;overflow-y:auto;padding:6px 8px;background:#0a0a0a;border-top:1px solid #222;font-size:11px;color:#888}
+#log{height:100px;overflow-y:auto;padding:6px 8px;background:#0a0a0a;border-top:1px solid #222;font-size:11px;color:#888}
+#settings{padding:6px 8px;background:#0d0d1a;border-top:1px solid #222}
+#settings h3{font-size:11px;color:#555;margin-bottom:4px;text-transform:uppercase;letter-spacing:1px}
+.srow{display:flex;align-items:center;gap:6px;margin:3px 0}
+.srow label{font-size:11px;color:#888;width:90px;flex-shrink:0}
+.srow input[type=range]{flex:1;height:4px;accent-color:#7eb8f7}
+.sval{font-size:11px;color:#7eb8f7;width:36px;text-align:right}
+.sgrp{margin-top:6px}
+.sgrp-title{font-size:10px;color:#444;margin:4px 0 2px;border-bottom:1px solid #222;padding-bottom:2px}
 #log .line{padding:1px 0;border-bottom:1px solid #1a1a1a}
 #log .line.state{color:#7eb8f7}
 #log .line.warn{color:#fa8}
@@ -233,6 +254,72 @@ canvas{width:100%;display:block;image-rendering:pixelated}
   <button class="qbtn" onclick="send('home')">home</button>
   <button class="qbtn" onclick="send('blink')">blink</button>
   <button class="qbtn red" onclick="send('reboot')">reboot</button>
+</div>
+<div id="settings">
+  <h3>Outdoor Tuning</h3>
+  <div class="sgrp">
+    <div class="sgrp-title">Motion sensitivity</div>
+    <div class="srow">
+      <label>Motion thr</label>
+      <input type="range" id="s_bgt" min="10" max="60" step="1"
+             oninput="sv(this,'bgt')" onchange="sc('bgt '+this.value)">
+      <span class="sval" id="v_bgt">30</span>
+    </div>
+    <div class="srow">
+      <label>BG learn rate</label>
+      <input type="range" id="s_bgr" min="2" max="40" step="1"
+             oninput="sv(this,'bgr')" onchange="sc('bgr '+this.value)">
+      <span class="sval" id="v_bgr">15</span>
+    </div>
+    <div class="srow">
+      <label>Shift detect</label>
+      <input type="range" id="s_shift" min="20" max="80" step="1"
+             oninput="sv(this,'shift')" onchange="sc('shift '+(this.value/100).toFixed(2))">
+      <span class="sval" id="v_shift">45%</span>
+    </div>
+  </div>
+  <div class="sgrp">
+    <div class="sgrp-title">Blob filtering</div>
+    <div class="srow">
+      <label>Min blob size</label>
+      <input type="range" id="s_minblob" min="5" max="100" step="1"
+             oninput="sv(this,'minblob')" onchange="sc('minblob '+this.value)">
+      <span class="sval" id="v_minblob">25</span>
+    </div>
+    <div class="srow">
+      <label>Min blob age</label>
+      <input type="range" id="s_minage" min="2" max="30" step="1"
+             oninput="sv(this,'minage')" onchange="sc('minage '+this.value)">
+      <span class="sval" id="v_minage">12f</span>
+    </div>
+    <div class="srow">
+      <label>Blob timeout</label>
+      <input type="range" id="s_timeout" min="200" max="3000" step="100"
+             oninput="sv(this,'timeout')" onchange="sc('blobtimeout '+this.value)">
+      <span class="sval" id="v_timeout">800ms</span>
+    </div>
+    <div class="srow">
+      <label>Habit strength</label>
+      <input type="range" id="s_habitstr" min="1" max="50" step="1"
+             oninput="sv(this,'habitstr')" onchange="sc('habit.str '+(this.value/1000).toFixed(3))">
+      <span class="sval" id="v_habitstr">8</span>
+    </div>
+  </div>
+  <div class="sgrp">
+    <div class="sgrp-title">Behaviour timing</div>
+    <div class="srow">
+      <label>Scan->Doze</label>
+      <input type="range" id="s_scandoze" min="3" max="60" step="1"
+             oninput="sv(this,'scandoze')" onchange="sc('scandoze '+this.value)">
+      <span class="sval" id="v_scandoze">10s</span>
+    </div>
+    <div class="srow">
+      <label>Doze->Sleep</label>
+      <input type="range" id="s_dozesleep" min="5" max="120" step="5"
+             oninput="sv(this,'dozesleep')" onchange="sc('dozesleep '+this.value)">
+      <span class="sval" id="v_dozesleep">20s</span>
+    </div>
+  </div>
 </div>
 <div id="cmdinput">
   <input id="cmd" type="text" placeholder="command..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
@@ -363,6 +450,9 @@ function onMessage(evt){
   }
   document.getElementById('blobinfo').textContent=bi;
 
+  // Update sliders from server params
+  if(d.params)updateSliders(d.params);
+
   // Log state transitions
   if(d.state!==lastState){
     addLog(d.state,'state');
@@ -372,6 +462,36 @@ function onMessage(evt){
     const cls=d.log.includes('State')?'state':
               d.log.includes('WARN')||d.log.includes('FAIL')?'warn':'';
     addLog(d.log,cls);
+  }
+}
+
+// Slider: update display value while dragging
+function sv(el,key){
+  const v=parseInt(el.value);
+  const labels={
+    bgt:v+'',bgr:v+'',shift:v+'%',
+    minblob:v+'px',minage:v+'f',timeout:v+'ms',
+    habitstr:v+'',scandoze:v+'s',dozesleep:v+'s'
+  };
+  const el2=document.getElementById('v_'+key);
+  if(el2)el2.textContent=labels[key]||v;
+}
+
+// Send command from slider change
+function sc(cmd){send(cmd);}
+
+// Update sliders from incoming params
+function updateSliders(p){
+  if(!p)return;
+  const map={
+    bgt:'s_bgt',bgr:'s_bgr',shift:'s_shift',
+    minblob:'s_minblob',minage:'s_minage',timeout:'s_timeout',
+    habitstr:'s_habitstr',scandoze:'s_scandoze',dozesleep:'s_dozesleep'
+  };
+  for(const[key,id] of Object.entries(map)){
+    if(p[key]===undefined)continue;
+    const el=document.getElementById(id);
+    if(el){el.value=p[key];sv(el,key);}
   }
 }
 
@@ -433,8 +553,11 @@ void webUiBegin() {
     bool cfgOk = WiFi.softAPConfig(AP_IP, AP_IP, IPAddress(255, 255, 255, 0));
     Serial.printf("[WebUI] softAPConfig: %s\n", cfgOk ? "OK" : "FAILED");
 
-    bool apOk = WiFi.softAP(AP_SSID, AP_PASS);
-    Serial.printf("[WebUI] softAP: %s\n", apOk ? "OK" : "FAILED");
+    bool apOk = WiFi.softAP(AP_SSID, AP_PASS, WIFI_CHANNEL, 0, 4);
+    Serial.printf("[WebUI] softAP: %s  channel: %d\n", apOk ? "OK" : "FAILED", WIFI_CHANNEL);
+
+    // Maximum TX power for better range
+    WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
     delay(500);  // give AP time to start
     Serial.printf("[WebUI] SSID: %s  IP: %s  Channel: %d\n",

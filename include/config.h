@@ -1,5 +1,13 @@
 #pragma once
 
+// ── WiFi AP configuration ─────────────────────────────────────────────────────
+// SSID: EyeWatcher-{UNIT_ID}   Password: eyewatch   IP: 192.168.4.1
+// Scan local WiFi and pick the emptiest channel (avoid 1, 6, 11 if busy)
+#ifndef UNIT_ID
+#define UNIT_ID       2    // change per device: 1, 2, 3...
+#endif
+#define WIFI_CHANNEL  10   // 1-13, pick least congested in your space
+
 // -- Vision pipeline selection -------------------------------------------------
 // Change default here, or switch at runtime with 'sal' / 'blob' serial command
 enum class VisionMode : uint8_t {
@@ -33,7 +41,7 @@ enum class VisionMode : uint8_t {
 
 #define UDP_MULTICAST_IP    "239.1.2.3"
 #define UDP_MULTICAST_PORT  5555
-#define UNIT_ID             1
+//#define UNIT_ID             2
 
 // -- I2C ----------------------------------------------------------------------
 #define I2C_SDA             5

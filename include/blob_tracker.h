@@ -48,6 +48,7 @@ struct Blob {
     uint32_t lastSeenMs;     // Last frame it was matched
     uint32_t age;            // Frames since first detected
     float    vx, vy;         // Velocity (normalised, pixels/frame)
+    float    habit;          // Habituation 0-1: static blob loses interest
 };
 
 struct BlobResult {
@@ -83,6 +84,9 @@ public:
                                       // 600/4800 = 12.5% of frame per blob
     int     mergeRadius     = 8;      // merge blobs closer than this (SAL pixels)
     int     morphRadius     = 1;      // morphological open radius (was 2 -- lower=less merging)
+    float   habitStrength   = 0.008f; // how fast static blob habituates per frame
+    float   habitDecay      = 0.995f; // how fast habituation fades when blob moves
+    float   habitThreshold  = 0.7f;   // habit level at which blob is suppressed
     float   matchRadius     = 0.15f;  // max normalised distance for blob tracking
     uint32_t blobTimeoutMs  = 800;    // remove blob if not seen for this long
                                       // 800ms -- tracks expire quickly when motion stops

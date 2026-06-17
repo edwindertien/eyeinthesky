@@ -279,15 +279,12 @@ void BlobTracker::_matchAndUpdate(Blob* raw, int rawCount, uint32_t now) {
         }
 
         if (bestRaw >= 0) {
-            // Update track
             matched[bestRaw] = true;
             Blob& r = raw[bestRaw];
-            // Velocity (smoothed)
             float newVx = (r.normX - _tracks[t].normX) / dt;
             float newVy = (r.normY - _tracks[t].normY) / dt;
             _tracks[t].vx = 0.7f * _tracks[t].vx + 0.3f * newVx;
             _tracks[t].vy = 0.7f * _tracks[t].vy + 0.3f * newVy;
-            // Smooth position
             _tracks[t].normX = 0.6f * _tracks[t].normX + 0.4f * r.normX;
             _tracks[t].normY = 0.6f * _tracks[t].normY + 0.4f * r.normY;
             _tracks[t].normW = r.normW;
@@ -296,6 +293,19 @@ void BlobTracker::_matchAndUpdate(Blob* raw, int rawCount, uint32_t now) {
             _tracks[t].score = r.score;
             _tracks[t].lastSeenMs = now;
             _tracks[t].age++;
+
+            // Habituation: static blob builds up interest suppression.
+            // Fast movement resets it -- only truly static blobs get suppressed.
+            float speed = sqrtf(_tracks[t].vx * _tracks[t].vx +
+                                 _tracks[t].vy * _tracks[t].vy);
+            if (speed < 0.01f) {
+                // Blob is stationary -- build habituation
+                _tracks[t].habit = fminf(1.0f,
+                    _tracks[t].habit + habitStrength);
+            } else {
+                // Blob is moving -- decay habituation (regain interest)
+                _tracks[t].habit *= habitDecay;
+            }
         } else {
             // No match -- expire if too old
             if (now - _tracks[t].lastSeenMs > blobTimeoutMs) {
@@ -318,6 +328,7 @@ void BlobTracker::_matchAndUpdate(Blob* raw, int rawCount, uint32_t now) {
             _tracks[t].lastSeenMs  = now;
             _tracks[t].age         = 1;
             _tracks[t].vx = _tracks[t].vy = 0;
+            _tracks[t].habit       = 0.0f;  // start with full interest
             Serial.printf("[Blob] New track %d at %.2f,%.2f area=%.3f\n",
                           _tracks[t].id, _tracks[t].normX, _tracks[t].normY,
                           _tracks[t].area);
@@ -391,12 +402,12 @@ BlobResult BlobTracker::_buildResult(uint32_t now) {
         if (_tracks[t].normX < EDGE || _tracks[t].normX > 1.0f - EDGE ||
             _tracks[t].normY < EDGE || _tracks[t].normY > 1.0f - EDGE) continue;
 
-        // Require actual motion -- velocity must be non-trivial.
-        // Removed age<20 exemption: young stationary blobs (noise, stopped
-        // person) should not keep the eye awake.
+        // Require motion OR low habituation -- stationary blobs fade out
         float speed = sqrtf(_tracks[t].vx * _tracks[t].vx +
                             _tracks[t].vy * _tracks[t].vy);
-        if (speed <= 0.005f) continue;
+        bool isMoving   = (speed > 0.005f);
+        bool notBored   = (_tracks[t].habit < habitThreshold);
+        if (!isMoving && !notBored) continue;  // static AND fully habituated
 
         float ageFactor  = fminf(1.0f, _tracks[t].age / 10.0f);
         float fresh      = 1.0f - (float)(now - _tracks[t].lastSeenMs) / blobTimeoutMs;
