@@ -13,7 +13,7 @@
 #include "saliency.h"
 
 // ===========================================================================
-//  main.cpp -- EyeWatcher Stage 2a (blob tracker edition)
+//  main.cpp -- Eye in the Sky (blob tracker edition)
 //
 //  Serial commands:
 //    info          -- status dump
@@ -62,7 +62,7 @@ static void renderAnsi(const VisionDebug& dbg) {
 
     // Header
     const char* modeStr = (dbg.mode == VisionMode::BLOBS) ? "BLOB" : "SAL";
-    Serial.printf(ANSI_BOLD "EyeWatcher " ANSI_RESET
+    Serial.printf(ANSI_BOLD "Eye in the Sky " ANSI_RESET
                   "[" ANSI_YEL "%s" ANSI_RESET "] "
                   "state=" ANSI_CYN "%s" ANSI_RESET
                   " fps=%.0f targets=" ANSI_YEL "%d" ANSI_RESET
@@ -126,7 +126,7 @@ static void i2cScan() {
 
 static void printInfo() {
     Serial.println("\n╔======================================╗");
-    Serial.println("║   EyeWatcher -- Blob Tracker          ║");
+    Serial.println("║   Eye in the Sky -- Blob Tracker      ║");
     Serial.println("╚======================================╝");
     Serial.printf("  State      : %s\n", stateName(behaviour_sm.getState()));
     Serial.printf("  Pan/Tilt   : %.1f / %.1f\n", eye.getPanDeg(), eye.getTiltDeg());
@@ -327,7 +327,7 @@ void setup() {
     while (!Serial && millis()-t < 2000) delay(10);
 
     Serial.println("\n╔======================================╗");
-    Serial.println("║   EyeWatcher -- Blob Tracker Edition  ║");
+    Serial.println("║   Eye in the Sky -- Blob Tracker Ed.  ║");
     Serial.println("╚======================================╝");
     Serial.printf("  PSRAM: %u  Heap: %u\n\n", ESP.getPsramSize(), ESP.getFreeHeap());
 

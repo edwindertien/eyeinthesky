@@ -4,7 +4,7 @@
 // =========================================================================
 //  web_ui.h -- WiFi AP + WebSocket configuration interface
 //
-//  Each EyeWatcher unit runs as a WiFi access point:
+//  Each Eye in the Sky unit runs as a WiFi access point:
 //    SSID:     EyeWatcher-{UNIT_ID}   (e.g. EyeWatcher-1)
 //    Password: eyewatch
 //    IP:       192.168.4.1

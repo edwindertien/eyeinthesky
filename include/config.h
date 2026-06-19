@@ -2,11 +2,19 @@
 
 // ── WiFi AP configuration ─────────────────────────────────────────────────────
 // SSID: EyeWatcher-{UNIT_ID}   Password: eyewatch   IP: 192.168.4.1
-// Scan local WiFi and pick the emptiest channel (avoid 1, 6, 11 if busy)
+//
+// PRIMARY: set UNIT_ID in platformio.ini build_flags:
+//   -DUNIT_ID=1          <- change per device
+//   -DWIFI_CHANNEL=11    <- optional: override channel here too
+//
+// WIFI_CHANNEL: pick the emptiest channel in your space (1, 6, 11 most common)
+// Use a WiFi scanner app to find which channels are least congested.
 #ifndef UNIT_ID
-#define UNIT_ID       2    // change per device: 1, 2, 3...
+#define UNIT_ID       1    // fallback if not set in platformio.ini
 #endif
-#define WIFI_CHANNEL  10   // 1-13, pick least congested in your space
+#ifndef WIFI_CHANNEL
+#define WIFI_CHANNEL  11   // fallback: change in platformio.ini with -DWIFI_CHANNEL=x
+#endif
 
 // -- Vision pipeline selection -------------------------------------------------
 // Change default here, or switch at runtime with 'sal' / 'blob' serial command
@@ -18,7 +26,7 @@ enum class VisionMode : uint8_t {
 #define VISION_DEFAULT_MODE VisionMode::BLOBS
 
 // ===========================================================================
-//  config.h -- EyeWatcher central configuration
+//  config.h -- Eye in the Sky central configuration
 //
 //  Hardware:
 //    Seeed XIAO ESP32-S3 Sense
@@ -41,7 +49,7 @@ enum class VisionMode : uint8_t {
 
 #define UDP_MULTICAST_IP    "239.1.2.3"
 #define UDP_MULTICAST_PORT  5555
-//#define UNIT_ID             2
+#define UNIT_ID             1
 
 // -- I2C ----------------------------------------------------------------------
 #define I2C_SDA             5

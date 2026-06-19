@@ -1,0 +1,128 @@
+<svg width="680" height="520" viewBox="0 0 680 520" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>EyeWatcher system block diagram</title>
+<desc>Hardware and software architecture showing ESP32-S3 dual-core split, camera pipeline, servo control, and WiFi web interface</desc>
+
+<rect width="680" height="520" fill="#ffffff"/>
+
+<defs>
+<marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="#73726c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+<marker id="arrBlue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="#185FA5" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+
+<text x="30" y="38" font-family="sans-serif" font-size="10" letter-spacing="1" fill="#888780" style="text-transform:uppercase">Hardware</text>
+<line x1="30" y1="44" x2="650" y2="44" stroke="#D3D1C7" stroke-width="0.5"/>
+
+<g>
+  <rect x="30" y="56" width="110" height="52" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="85" y="77" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#085041">Camera</text>
+  <text x="85" y="95" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#0F6E56">OV3660 / OV2640</text>
+</g>
+
+<g>
+  <rect x="30" y="130" width="110" height="52" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="85" y="151" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#085041">8Servo unit</text>
+  <text x="85" y="169" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#0F6E56">M5Stack I2C</text>
+</g>
+
+<g>
+  <rect x="30" y="204" width="110" height="68" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="85" y="222" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#085041">4x Servo</text>
+  <text x="85" y="240" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#0F6E56">pan / tilt</text>
+  <text x="85" y="258" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#0F6E56">lid top / bot</text>
+</g>
+
+<g>
+  <rect x="30" y="310" width="110" height="52" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="85" y="331" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#085041">Mobile phone</text>
+  <text x="85" y="349" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#0F6E56">WiFi AP client</text>
+</g>
+
+<rect x="170" y="48" width="460" height="380" rx="16" fill="none" stroke="#D3D1C7" stroke-width="0.5" stroke-dasharray="5 3"/>
+<text x="185" y="66" font-family="sans-serif" font-size="12" fill="#888780">ESP32-S3  |  8 MB PSRAM  |  240 MHz dual-core</text>
+
+<g>
+  <rect x="184" y="76" width="192" height="328" rx="10" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="280" y="98" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#042C53">Core 0</text>
+  <text x="280" y="115" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#185FA5">vision task (FreeRTOS)</text>
+</g>
+
+<g>
+  <rect x="396" y="76" width="220" height="328" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+  <text x="506" y="98" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#26215C">Core 1</text>
+  <text x="506" y="115" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#534AB7">Arduino loop ~50 Hz</text>
+</g>
+
+<g>
+  <rect x="200" y="132" width="160" height="40" rx="6" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+  <text x="280" y="152" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#2C2C2A">Camera grab</text>
+</g>
+<g>
+  <rect x="200" y="186" width="160" height="40" rx="6" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+  <text x="280" y="206" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#2C2C2A">Background subtract</text>
+</g>
+<g>
+  <rect x="200" y="240" width="160" height="40" rx="6" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+  <text x="280" y="260" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#2C2C2A">Blob tracker</text>
+</g>
+<g>
+  <rect x="200" y="294" width="160" height="40" rx="6" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+  <text x="280" y="314" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#2C2C2A">Debug thumbnails</text>
+</g>
+<text x="280" y="352" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#888780">or saliency map</text>
+
+<line x1="280" y1="172" x2="280" y2="184" stroke="#888780" stroke-width="1" marker-end="url(#arr)"/>
+<line x1="280" y1="226" x2="280" y2="238" stroke="#888780" stroke-width="1" marker-end="url(#arr)"/>
+<line x1="280" y1="280" x2="280" y2="292" stroke="#888780" stroke-width="1" marker-end="url(#arr)"/>
+
+<g>
+  <rect x="412" y="132" width="188" height="40" rx="6" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+  <text x="506" y="152" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#2C2C2A">Behaviour state machine</text>
+</g>
+<g>
+  <rect x="412" y="186" width="188" height="40" rx="6" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+  <text x="506" y="206" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#2C2C2A">ServoEye  (gaze + lids)</text>
+</g>
+<g>
+  <rect x="412" y="240" width="188" height="40" rx="6" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+  <text x="506" y="260" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#2C2C2A">Calibration  (NVS)</text>
+</g>
+<g>
+  <rect x="412" y="294" width="188" height="40" rx="6" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+  <text x="506" y="314" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#2C2C2A">WebSocket push</text>
+</g>
+<g>
+  <rect x="412" y="348" width="188" height="40" rx="6" fill="#F1EFE8" stroke="#888780" stroke-width="0.5"/>
+  <text x="506" y="368" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="14" font-weight="500" fill="#2C2C2A">Serial commands</text>
+</g>
+
+<line x1="506" y1="172" x2="506" y2="184" stroke="#888780" stroke-width="1" marker-end="url(#arr)"/>
+<line x1="506" y1="226" x2="506" y2="238" stroke="#888780" stroke-width="1" marker-end="url(#arr)"/>
+
+<path d="M 360 260 Q 386 260 386 152 L 410 152" fill="none" stroke="#378ADD" stroke-width="1.5" marker-end="url(#arrBlue)"/>
+<rect x="354" y="235" width="62" height="18" rx="4" fill="#ffffff"/>
+<text x="385" y="245" text-anchor="middle" dominant-baseline="central" font-family="sans-serif" font-size="12" fill="#185FA5">BlobResult</text>
+<text x="385" y="225" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#378ADD">queue (depth 1)</text>
+
+<line x1="140" y1="82" x2="198" y2="145" stroke="#888780" stroke-width="1" marker-end="url(#arr)"/>
+<text x="158" y="108" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#888780">DVP</text>
+
+<line x1="396" y1="225" x2="142" y2="165" stroke="#888780" stroke-width="1" marker-end="url(#arr)"/>
+<text x="278" y="205" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#888780">I2C</text>
+
+<line x1="85" y1="182" x2="85" y2="202" stroke="#888780" stroke-width="1" marker-end="url(#arr)"/>
+<text x="100" y="196" font-family="sans-serif" font-size="12" fill="#888780">PWM</text>
+
+<path d="M 140 336 Q 165 336 165 380 Q 165 430 506 430 L 506 410" fill="none" stroke="#888780" stroke-width="1" marker-end="url(#arr)" stroke-dasharray="4 2"/>
+<path d="M 506 412 Q 506 430 165 430 Q 165 362 140 350" fill="none" stroke="#888780" stroke-width="1" marker-end="url(#arr)" stroke-dasharray="4 2"/>
+<text x="340" y="446" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#888780">WiFi AP  192.168.4.1  (WebSocket + HTTP)</text>
+
+<rect x="30" y="400" width="10" height="2" fill="#378ADD"/>
+<text x="46" y="404" font-family="sans-serif" font-size="12" fill="#5F5E5A">Data flow</text>
+<line x1="30" y1="422" x2="40" y2="422" stroke="#888780" stroke-width="1" stroke-dasharray="4 2"/>
+<text x="46" y="426" font-family="sans-serif" font-size="12" fill="#5F5E5A">Control / config</text>
+
+</svg>

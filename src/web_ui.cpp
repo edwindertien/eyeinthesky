@@ -192,7 +192,7 @@ static const char PAGE[] PROGMEM = R"rawhtml(
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-<title>EyeWatcher</title>
+<title>Eye in the Sky</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#111;color:#ddd;font-family:monospace;font-size:13px}
@@ -230,7 +230,7 @@ canvas{width:100%;display:block;image-rendering:pixelated}
 </head><body>
 <div id="connbar" class="err">Connecting...</div>
 <div id="header">
-  <h1>EyeWatcher</h1>
+  <h1>Eye in the Sky</h1>
   <div id="status">--</div>
 </div>
 <div id="canvases">
